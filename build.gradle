@@ -1,0 +1,40 @@
+// ARC 独立构建：仅引用本地框架与自有游戏依赖，不将它们打入 MOD。
+plugins { id 'java' }
+group = 'net.poosh.arc'
+version = '0.1.0-dev.3'
+
+def frameworkDir = file(findProperty('acbricDir') ?: '../Acbric')
+def apiJar = new File(frameworkDir, 'build/libs/Acbric-1.0-SNAPSHOT-api-mod.jar')
+// 可指向开发者自有游戏的 libs；路径不写入仓库或发行 JAR。
+def gameLibDir = file(findProperty('gameLibDir') ?: new File(frameworkDir, 'libs'))
+def gameA = new File(gameLibDir, 'asplit-A.zip')
+def gameB = new File(gameLibDir, 'asplit-B.zip')
+def loaderLibDir = new File(frameworkDir, 'build/dist/Acbric/loader-libs')
+
+java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
+dependencies {
+    compileOnly files(apiJar)
+    compileOnly fileTree(dir: loaderLibDir, include: ['*.jar'])
+    compileOnly fileTree(dir: gameLibDir, include: ['*.jar', '*.zip'])
+}
+tasks.register('verifyInputs') {
+    doLast {
+        def missing = [apiJar, gameA, gameB].findAll { !it.isFile() }
+        if (!missing.empty) throw new GradleException('Missing local dependencies / 缺少本地依赖:\n' + missing.join('\n'))
+        if (!loaderLibDir.isDirectory() || fileTree(dir: loaderLibDir, include: ['sponge-mixin-*.jar']).isEmpty())
+            throw new GradleException('Build matching Acbric dist first / 请先构建匹配的 Acbric dist: ' + loaderLibDir)
+    }
+}
+tasks.withType(JavaCompile).configureEach {
+    dependsOn tasks.named('verifyInputs')
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-proc:none']
+}
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand(version: project.version) }
+}
+jar {
+    archiveBaseName = 'ARC-Overhaul'
+    from('LICENSE') { into 'META-INF' }
+}

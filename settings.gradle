@@ -1,0 +1,2 @@
+// ARC 大修 MOD 独立工程，不参与 Acbric 框架的 source set 或默认发行包。
+rootProject.name = 'ARC-Overhaul'

@@ -1,0 +1,17 @@
+# ARC Overhaul 改动记录
+
+[English](CHANGELOG.md)
+
+## 0.1.0-dev.3 — 2026-09-26
+
+- 将独立 Git 项目整理为可协作的 **ARC Overhaul / ARC 大修**。Gradle 工程/产物前缀改为 `ARC-Overhaul`，MOD ID `arc_overhaul`、包名及存档/配置契约不变。
+- 自有代码和文档采用 MIT，保留 Gradle wrapper 第三方声明，正式 MOD JAR 包含本项目许可证。
+- 补充中英文协作指南，更新安装、测试和研究文档，加入 PR 模板、Git 忽略及编辑规则。排除游戏、本地依赖、运行夹具和构建产物。
+- Gradle 支持仓库外的游戏库路径；Windows 集成脚本以 `--game`、`--acbric-dir`、`--java-home`、`--arc-jar`、`--output-root` 替代维护者私有工作区路径，记录输入哈希，拒绝覆盖已有测试目录。
+- 没有玩法调整。指定外部游戏库构建通过；参数化脚本在 **1.2.15.2、1.2.14 各通过 71 项，共 142 项**。API 基线 `0.3.3-dev.21`，Acbric `1be89b2`。未覆盖完整世界/道路/初始资产/GPU/联机；结果不涵盖游戏 1.2.15.3。
+
+已验证 MOD JAR SHA256：`e0091f84ec880298589f801f9eaa2f40421566408d55dd2872f1d2a474afdd7a`。API JAR SHA256：`12abec546029568b47d8902b3479056df816d81d1b3a7b76269154e9be7b1fcb`。本地摘要 `build/runtime-tests/repo-init/summary.json`，日志与复制的游戏输入不分发。重新构建可能因 ZIP 元数据改变而产生不同哈希。
+
+## 0.1.0-dev.2 — 2026-09-26
+
+实现每个人类势力的征服开局城市、城镇、现金设置，双语开局/详情入口、战役规则冻结、存档布局早期恢复及与旧 Starting Cities 的互斥。AI 数量/现金规则保留原版。初次两版各通过 71 项定向检查，完整实机验收独立进行。见[研究](RESEARCH.zh-CN.md)、[测试手册](TESTING.zh-CN.md)。
