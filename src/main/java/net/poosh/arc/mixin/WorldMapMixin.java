@@ -13,8 +13,10 @@ public abstract class WorldMapMixin implements GenerationAccess {
     @Unique private StartValues arc$values;
     @Unique private int arc$baseTowns;
     @Unique private boolean arc$layoutModified;
+    @Unique private int arc$nextSettlementId;
     @Override public StartValues arc$options() { return arc$values; }
     @Override public int arc$originalTowns() { return arc$baseTowns; }
+    @Override public int arc$nextSettlementId() { return arc$nextSettlementId++; }
 
     @Inject(method = "doSetup()Z", at = @At("HEAD"))
     private void arc$prepare(CallbackInfoReturnable<Boolean> cir) {
@@ -30,6 +32,8 @@ public abstract class WorldMapMixin implements GenerationAccess {
         MapSize layout = MapLayout.copy(map.size, slots);
         arc$layoutModified = layout != map.size;
         map.size = layout;
+        // 首都已占用 ID 0..empires-1，定居点从其后连续分配。
+        arc$nextSettlementId = map.size.empires;
         arc$values = options;
     }
     @Redirect(method = "<init>(Lorg/json/JSONObject;Lcom/zarkonnen/airships/AirshipGame;Lcom/zarkonnen/airships/InPipe;)V",

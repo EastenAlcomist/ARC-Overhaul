@@ -28,6 +28,26 @@ public abstract class TownPlacementMixin {
         }
         return ((WorldMapAccess) map).arc$townIncome(human, city, random);
     }
+    /**
+     * 把本槽位新建的定居点收紧为连续 ID。
+     *
+     * <p>跳过槽位会在原生 ID 序列（{@code empires.size() + index}）里留下空洞。而原生
+     * {@code ShapeUtils.cityOwnershipAreas} 是从 ID 0 起顺序查找、一旦某个 ID 无对应格子就
+     * 永久退出循环，因此空洞之上所有城市都不会生成领土多边形，战略地图上不会被上色。
+     * 按创建顺序重新编号即可保持序列连续（无空洞时结果与原生完全相同）。</p>
+     */
+    @Inject(method = "run(ILcom/zarkonnen/airships/WorldMap;)Z", at = @At("RETURN"))
+    private void arc$contiguousSettlementId(int index, WorldMap map, CallbackInfoReturnable<Boolean> cir) {
+        GenerationAccess generation = (GenerationAccess) map;
+        StartValues values = generation.arc$options();
+        if (values == null || !values.changesLand()) return;
+        Empire empire = map.empires.get(index % map.size.empires);
+        if (empire.cities.isEmpty()) return;
+        City settlement = empire.cities.get(empire.cities.size() - 1);
+        // 仅当本槽位确实新建了定居点（其 ID 仍是本槽位的原生编号）时才重排。
+        if (settlement.id != map.empires.size() + index) return;
+        settlement.id = generation.arc$nextSettlementId();
+    }
     @Inject(method = "run(ILcom/zarkonnen/airships/WorldMap;)Z", at = @At("RETURN"))
     private void arc$checkPlacement(int index, WorldMap map, CallbackInfoReturnable<Boolean> cir) {
         GenerationAccess generation = (GenerationAccess) map;
