@@ -2,6 +2,8 @@
 
 独立的 Airships 大修 MOD，正式名称 **ARC Overhaul**，中文 **ARC 大修**，不要自行解释或扩展 ARC 缩写。MOD ID `arc_overhaul`，基于 Acbric dev.21，JDK 21。自有源码与文档采用用户选定的 MIT；第三方 wrapper 保留原许可证。本项目是独立 Git 仓库，协作基线为 `main`。禁止把功能 MOD 加入 Acbric 框架默认包。
 
+2026-09-26 PR #1 已合并为 `b963e85`：新地图定居点连续 ID 修复领土缺色，不重排旧存档。用户确认该修复实机正常，未提供完整版本/场景矩阵。后续测试修订在 API dev.25、游戏 1.2.15.2 / 1.2.14 各通过 407 项，共 814 项；结果 `build/runtime-tests/pr1-contiguous-final/summary.json`，旧 dev.3 JAR 在新断言处按预期失败。包含 33 组布局和真实原生描边，但归属网格为合成输入，不扩大完整世界/GPU/联机覆盖。以下 71/142 数字为历史基线；当前测试范围见 TESTING。
+
 2026-09-26 dev.3 整理命名与协作工程，保留 dev.2 的征服开局城市/城镇/现金行为。仅人类势力，AI 保持原版规则。三个字段 -1 保留原版，自定义 1–4 城市、0–8 城镇、0–1000000 现金。旧参考为 acbric-starting-cities.jar 0.3.1，已研究并声明冲突，不能与本 MOD 同时启用。另一份 City Upgrade 是建筑升级链项目。研究文件不在 Git 中。
 
 文档入口 README / CONTRIBUTING / RESEARCH / TESTING / CHANGELOG，均有英文与 zh-CN 版本。原生设置列表底部及 MOD 详情入口打开框架设置页。dev.3 两版各 71 项（142 项）通过，证据为本地 `build/runtime-tests/repo-init/summary.json`（不提交运行夹具），摘要见 CHANGELOG。真实原生放置/保存/状态恢复已测，但纹章/背景/土地资源有测试替身；完整世界、道路、初始资产、GPU 和联机仍待实机，不扩大验收范围。

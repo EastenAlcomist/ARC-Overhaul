@@ -62,8 +62,83 @@ public final class ArcRuntimeProbe {
         check(map.empires.get(1).cities.size()==3&&map.empires.get(1).cities.stream().filter(c->!c.isTown).count()==1,"native placement keeps AI at one city and two towns");
         Set<Integer> ids=new HashSet<>();StringBuilder result=new StringBuilder();
         for(Empire empire:map.empires)for(City city:empire.cities){check(ids.add(city.id),"unique native settlement ID "+city.id);result.append(city.id).append(':').append(city.x).append(',').append(city.y).append(',').append(city.isTown).append(',').append(city.income).append(';');}
-        check(map.getCity(10)!=null&&map.getCity(11)==null,"native city cache handles extra city IDs and unused AI slot");
+        check(java.util.stream.IntStream.range(0,9).allMatch(id -> map.getCity(id)!=null)
+            && map.getCity(9)==null,"native city cache contains contiguous IDs 0 through 8 only");
         return result.toString();
+    }
+    /** 在真实放置后验证领土描边；只构造小块归属网格，不冒充完整地形或 GPU 验收。 */
+    static void checkTerritoryIds() throws Exception {
+        StartValues[] settings = {
+            new StartValues(-1,-1,-1), new StartValues(-1,-1,42), new StartValues(1,2,-1),
+            new StartValues(2,8,-1), new StartValues(1,0,-1), new StartValues(4,8,-1),
+            new StartValues(2,0,-1), new StartValues(-1,1,-1)
+        };
+        for (int empireCount : new int[]{2,4}) {
+            for (int humanParity=0; humanParity<2; humanParity++) {
+                String defaults = null;
+                for (int i=0; i<settings.length; i++) {
+                    String snapshot = placeAndTrace(empireCount,humanParity,settings[i],false);
+                    if (i==0) defaults=snapshot;
+                    if (i==1 || i==2) check(snapshot.equals(defaults),
+                        "cash-only/explicit defaults preserve IDs, placement, types, income and RNG: "
+                            + empireCount + "/" + humanParity + "/" + settings[i]);
+                }
+            }
+        }
+        // 人类首槽之后强制 AI 选址失败，随后恢复陆地；失败不应消耗连续 ID。
+        placeAndTrace(2,0,new StartValues(2,8,-1),true);
+    }
+    static String placeAndTrace(int empireCount,int humanParity,StartValues values,boolean failAI) throws Exception {
+        base=new MapSize(new JSONObject().put("name","SMALLISH").put("gridSize",8)
+            .put("empires",empireCount).put("nests",0));
+        Loadable.map.get(MapSize.class).put(base.name,base);
+        WorldMap map=newWorld(values).map;
+        int gridSize=map.size.gridSize;
+        map.water=new boolean[gridSize][gridSize];
+        map.setupCityNames=new ArrayList<>(List.of("a","b","c","d","e","f"));
+        for (int i=0; i<empireCount; i++) map.empires.add(empire(i%2==humanParity,i));
+        map.r=new GuardedRandom(89412+humanParity);
+        Object placement=stage(map,2);
+        int slots=(Integer)invoke(placement,"getSize");
+        for (int i=0; i<slots; i++) {
+            if (failAI && i==1) for (boolean[] row:map.water) Arrays.fill(row,true);
+            runStage(placement,i,map);
+            if (failAI && i==1) for (boolean[] row:map.water) Arrays.fill(row,false);
+        }
+        String label=empireCount+"/"+humanParity+"/"+values+"/failAI="+failAI;
+        Set<Integer> ids=new TreeSet<>();
+        ArrayList<City> settlements=new ArrayList<>();
+        StringBuilder snapshot=new StringBuilder();
+        for (int i=0; i<empireCount; i++) {
+            Empire empire=map.empires.get(i);
+            int expected=empire.playerControlled ? values.cityCount()+values.townCount(base.townsPerEmpire)
+                : 1+base.townsPerEmpire;
+            if (failAI && i==1) expected--;
+            check(empire.cities.size()==expected,label+" settlement count for empire "+i);
+            check(empire.cities.stream().filter(city -> !city.isTown).count()
+                ==(empire.playerControlled ? values.cityCount() : 1),label+" city types for empire "+i);
+            for (City city:empire.cities) {
+                settlements.add(city);
+                ids.add(city.id);
+                snapshot.append(i).append(':').append(city.id).append(':').append(city.x).append(',')
+                    .append(city.y).append(',').append(city.isTown).append(',').append(city.income).append(';');
+            }
+        }
+        check(ids.size()==settlements.size(),label+" unique IDs");
+        check(java.util.stream.IntStream.range(0,settlements.size()).allMatch(ids::contains),label+" contiguous IDs");
+        check(settlements.stream().allMatch(city -> map.getCity(city.id)==city)
+            && map.getCity(settlements.size())==null,label+" city cache matches settlement identities");
+        // 保留真实放置得到的 ID，把测试领土排列为隔开的单格，避免高数量场景夹具重叠。
+        // 这里不模拟影响力分配；直接调用游戏字节码，检查 ID 空洞是否截断领土描边。
+        int[][] ownership=new int[3][settlements.size()*3+2];
+        for (int[] row:ownership) Arrays.fill(row,-1);
+        for (int i=0; i<settlements.size(); i++) ownership[1][i*3+1]=settlements.get(i).id;
+        ArrayList<ShapeUtils.Area> areas=new ArrayList<>();
+        ShapeUtils.cityOwnershipAreas(ownership,new HashMap<>(),new ArrayList<>(),areas);
+        Set<Integer> tracedIds=new HashSet<>();
+        for (ShapeUtils.Area area:areas) tracedIds.add(area.identifier);
+        check(areas.size()==settlements.size() && tracedIds.equals(ids),label+" native territory area for every settlement");
+        return snapshot.append("rng=").append(map.r.nextInt()).toString();
     }
     public static void main(String[] args) throws Exception {
         for(String name:List.of("WorldMap","WorldMap$3","WorldMap$4","GameSetupScreen","CampaignWorld","WorldGenScreen")) {
@@ -140,6 +215,7 @@ public final class ArcRuntimeProbe {
         config.save(config.read(),new StartValues(2,1,456).json());config.reload();check(StartValues.read(config.read().data()).equals(new StartValues(2,1,456)),"real config persistence");
         check(placeAll().equals(placeAll()),"same seed and settings produce identical native placements with isolated asset fixtures");
         check(generatedLand==14&&generatedCityLand==4,"actual native placement reaches land hook with correct city types");
+        checkTerritoryIds();
         System.out.println("ARC RUNTIME PASS: "+checks+" checks");
     }
 }

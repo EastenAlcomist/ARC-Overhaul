@@ -15,6 +15,7 @@
 |---|---|
 | All -1 | Vanilla one city, map-default towns and cash |
 | Cities 3, towns 3, cash 12345 | Exactly those player counts/cash on entering the map; AI follows vanilla counts |
+| Cities 2, towns 8 | Every extra player town has territory colour; check AI territory as well |
 | Cities 1, towns 0, cash 0 | One city, no towns/cash, no ritual-selection bounds error |
 | Cash only, counts -1 | Counts unchanged; initial asset budget is not increased |
 | Cities changed, towns -1 | Additional cities plus the map-default number of towns |
@@ -37,7 +38,13 @@ Full multiplayer remains unverified. Optional testing requires matching ARC/API 
 
 ## Automated coverage and diagnostics
 
-Both game versions pass 71 checks each (142 total): real Fabric transformations, native placement, CREATED, disk saves and binary state reconstruction. Arms/background/land resources use test-only fixtures. Full terrain, roads, initial assets, GPU and multiplayer sessions remain untested.
+After merging PR #1, game 1.2.15.2 / 1.2.14 each pass **407 checks**, **814 total**, using Acbric API `0.3.3-dev.25` and JDK 21. Local results: `build/runtime-tests/pr1-contiguous-final/summary.json`. The original dev.3 result of 71 checks per build is historical.
+
+The 33 added layouts cover two/four empires, different human positions, extra/reduced/zero towns, maximum counts, defaults/cash-only/explicit vanilla counts, and native AI placement failure. They check counts, types, unique contiguous IDs, city-cache identity, default placement/RNG equivalence, and directly invoke native `ShapeUtils.cityOwnershipAreas` to check that every settlement receives an area. Running the same test against the pre-fix dev.3 JAR fails the new contiguous-ID assertion as expected (local `pr1-negative-old-mod` evidence).
+
+Real Fabric transformations, native placement, CREATED, disk saves and binary state reconstruction run with test-only arms/background/land fixtures. Territory tracing uses separated single-cell ownership fixtures retaining actual settlement IDs, not full territory influence generation. Automated coverage does not include full terrain, roads, initial assets, GPU or multiplayer sessions.
+
+On 2026-09-26 the user confirmed that PR #1's fix passed manual gameplay testing. No version, seed or scenario matrix was supplied; record this as manual confirmation of the territory-colour fix, not completion of every manual or multiplayer case.
 
 Keep native user-data `log.txt` (usually under `AirshipsGame`) and the latest `game/logs/acbric/` startup directory when reporting errors. Include game version, seed, map size, all three values, enabled MODs and steps. Historical maintainer evidence is private; you can reproduce the checks with the committed test source and your own game inputs below.
 

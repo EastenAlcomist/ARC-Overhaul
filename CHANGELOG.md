@@ -5,7 +5,7 @@
 ## Unreleased
 
 - Fix extra starting towns losing their territory colour on the strategic map. Skipping unused placement slots left gaps in the native settlement ID sequence, and the native territory tracer (`ShapeUtils.cityOwnershipAreas`) walks IDs upwards from 0 and exits permanently at the first ID with no owning cell — so every settlement above that gap never received a territory area and was never painted. Settlement IDs are now assigned contiguously as they are created. When no placement slot is skipped the sequence is identical to vanilla, so maps using the default counts are unaffected.
-- Validation for this change: reasoned plus reproduced against a standalone copy of the native tracer; **not** compiled or run against game 1.2.15.2 / 1.2.14 because no matching `0.3.3-dev.21` framework build was available. Details in the pull request.
+- PR #1 was initially validated using a standalone copy of the native tracer. After merging, add contiguous-ID, city-cache and native territory-tracing regressions: 407 checks each for game 1.2.15.2 / 1.2.14, 814 total, with API `0.3.3-dev.25`. The old dev.3 JAR fails the new assertion as expected. The user confirmed the fix in manual gameplay testing. See [TESTING](TESTING.md) for fixtures, synthetic ownership grids and coverage limits; this does not establish full multiplayer acceptance.
 
 ## 0.1.0-dev.3 — 2026-09-26
 

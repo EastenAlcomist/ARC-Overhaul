@@ -40,7 +40,7 @@ Use JDK 21 and a matching Acbric API dev.21 build. See [contributor setup](CONTR
 
 Output: `build/libs/ARC-Overhaul-0.1.0-dev.3.jar`. Replace the previous ARC JAR instead of installing both. Game, framework and test classes are not bundled. Nothing is automatically installed. `build` checks compilation/packaging; its default `test` has no sources. Run [integration tests](TESTING.md#run-isolated-checks-windows) separately with your own game inputs.
 
-Both game builds (1.2.15.2 / 1.2.14) pass 71 targeted checks each, 142 total: real Fabric transformation, native placement/IDs, one-time cash, configuration and native disk/binary-state persistence. Arms, backgrounds and land resources use test fixtures; full map/roads/assets generation, GPU and multiplayer remain unverified. See [testing](TESTING.md).
+PR #1 fixes missing territory colour for extra towns, with manual confirmation from the user. Both game builds (1.2.15.2 / 1.2.14) pass 407 targeted checks each, 814 total, using API dev.25: real Fabric transformation, native placement/contiguous IDs, territory tracing, one-time cash, configuration and native disk/binary-state persistence. Arms/background/land resources use fixtures and territory tracing uses synthetic ownership grids; full map/roads/initial-assets generation, GPU and multiplayer are not comprehensively verified. See [testing](TESTING.md).
 
 ## Layout
 

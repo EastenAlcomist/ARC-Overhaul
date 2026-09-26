@@ -66,6 +66,6 @@ for game,base,data in games:
     log=(run/'runtime.log').read_text(encoding='utf-8');m=re.search(r'ARC RUNTIME PASS: (\d+) checks',log)
     if r.returncode!=0 or m is None:raise RuntimeError(f'Failed: {run/"runtime.log"}\n{log[-7500:]}')
     results.append({'game':game,'checks':int(m.group(1)),'status':'PASS','gameSha256':{name:hashlib.sha256((base/'libs'/name).read_bytes()).hexdigest() for name in ['asplit-A.zip','asplit-B.zip']}});print(results[-1],flush=True)
-summary={'runs':results,'arcSha256':hashlib.sha256(arc.read_bytes()).hexdigest(),'apiSha256':hashlib.sha256(api.read_bytes()).hexdigest(),'limitations':'No full world generation, graphical UI, assets allocation or multiplayer lobby session. Arms/background/land asset methods replaced only in test fixture; native placement, types, incomes and IDs exercised.'}
+summary={'runs':results,'arcSha256':hashlib.sha256(arc.read_bytes()).hexdigest(),'apiSha256':hashlib.sha256(api.read_bytes()).hexdigest(),'limitations':'No full world generation, graphical UI, assets allocation or multiplayer lobby session. Arms/background/land asset methods replaced only in test fixture; native placement, types, incomes and IDs exercised. Native territory tracing uses synthetic separated ownership cells with IDs from real placements, not full territory influence generation.'}
 (e/'summary.json').write_text(json.dumps(summary,indent=2)+'\n',encoding='utf-8')
 print(f'Results / 测试结果: {e/"summary.json"}')
