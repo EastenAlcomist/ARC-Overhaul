@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "ARC Overhaul",
   "license": "MIT",
-  "description": "ARC Overhaul: human starting cities, towns and cash / ARC 大修：人类玩家开局城市、城镇和现金设置。",
+  "description": "ARC Overhaul: human starting cities, towns, cash and research points / ARC 大修：人类玩家开局城市、城镇、现金与研发点设置。",
   "environment": "client",
   "entrypoints": {"acbric": ["net.poosh.arc.ArcMod"]},
   "mixins": ["arc.mixins.json"],

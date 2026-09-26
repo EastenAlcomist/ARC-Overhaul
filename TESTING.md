@@ -1,11 +1,11 @@
 # ARC Overhaul starting-options test guide
 
-[中文](TESTING.zh-CN.md) · 0.1.0-dev.3 · 2026-09-26
+[中文](TESTING.zh-CN.md) · 0.1.0-dev.4 · 2026-09-26
 
 ## Install and open
 
 1. Exit the game. Use API dev.21 or later compatible. Disable Starting Cities and restart, or keep its JAR outside `mods/`. Install only one ARC version.
-2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.3.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
+2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.4.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
 3. Start a new single-player conquest setup. Scroll its settings list to the bottom and select **ARC Overhaul: Player starting options**, or use **MOD list → ARC Overhaul → Details**.
 4. Edit, Apply, close, then use the native Start button. `-1` preserves that field's vanilla value; fields are independent.
 
@@ -18,6 +18,10 @@
 | Cities 2, towns 8 | Every extra player town has territory colour; check AI territory as well |
 | Cities 1, towns 0, cash 0 | One city, no towns/cash, no ritual-selection bounds error |
 | Cash only, counts -1 | Counts unchanged; initial asset budget is not increased |
+| Research 3000000, new campaign | On entering the map nothing is shown yet (the game has no display for banked points); selecting any tech immediately fills its progress bar, and a cheap tech completes at once |
+| Research 0 | No research is granted; the tech screen behaves exactly like vanilla |
+| Research -1, letters, over 10000000 | Rejected in the field or on Apply; previous values remain |
+| Extra towns on a map with small islands | No player settlement sits on a speck connected to nothing; AI placement is unchanged |
 | Cities changed, towns -1 | Additional cities plus the map-default number of towns |
 | Zero cities, letters, fractions, out-of-range | Rejected in the field or on Apply; previous values remain |
 | Cancel / Esc / X after editing | Confirmed discard preserves previous values; Enter does not start a campaign through the editor |

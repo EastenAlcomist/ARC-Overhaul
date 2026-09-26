@@ -2,7 +2,9 @@
 package regression;
 
 import com.zarkonnen.airships.*;
+import com.zarkonnen.catengine.util.Utils;
 import net.poosh.arc.conquest.*;
+import net.poosh.arc.mixin.*;
 import net.fabricacs.api.rules.SharedRules;
 import net.fabricacs.api.config.*;
 import org.json.*;
@@ -65,6 +67,57 @@ public final class ArcRuntimeProbe {
         check(java.util.stream.IntStream.range(0,9).allMatch(id -> map.getCity(id)!=null)
             && map.getCity(9)==null,"native city cache contains contiguous IDs 0 through 8 only");
         return result.toString();
+    }
+    /** 连通陆地大小：直接调用被注入的 ARC 检查函数本体，避免在测试里重写一遍算法。 */
+    static int landMass(Object stage,WorldMap map,int x,int y,int cap) throws Exception {
+        return (Integer)invoke(stage,"arc$landMass",map,x,y,cap);
+    }
+    static int landMinimum(Object stage,WorldMap map) throws Exception {
+        return (Integer)invoke(stage,"arc$landMinimum",map);
+    }
+    /**
+     * 孤立陆地保护：造一张「两块大陆 + 大量孤立小格」的水域图。
+     * 原生 findMapLocationSpot 只要求落点不是水，孤立的一格陆点完全合格，于是新增城镇会落在
+     * 与任何地块都不相连的小岛上；ARC 的额外定居点会重新选址直到连在一块像样的陆地上。
+     */
+    static void checkLandPlacement() throws Exception {
+        base=new MapSize(new JSONObject().put("name","SMALLISH").put("gridSize",4).put("empires",2).put("nests",0));
+        Loadable.map.get(MapSize.class).put(base.name,base);
+        CampaignWorld world=newWorld(new StartValues(2,1,0,0));
+        WorldMap map=world.map;
+        int grid=map.size.gridSize;
+        map.water=new boolean[grid][grid];
+        for(boolean[] row:map.water)Arrays.fill(row,true);
+        for(int y=21;y<50;y++)for(int x=21;x<50;x++)map.water[y][x]=false;   // 玩家首都所在大陆 (35,35)
+        for(int y=52;y<81;y++)for(int x=52;x<81;x++)map.water[y][x]=false;   // AI 首都所在大陆 (60,60)
+        for(int y=1;y<grid-1;y+=3)for(int x=1;x<grid-1;x+=3)if(map.water[y][x])map.water[y][x]=false;
+        map.setupCityNames=new ArrayList<>(List.of("a","b","c","d"));
+        map.empires.add(empire(true,0));map.empires.add(empire(false,1));
+        map.r=new GuardedRandom(4711);
+        Object stage=stage(map,2);
+        int minimum=landMinimum(stage,map);
+        check(minimum>=32,"ARC landmass minimum scales with the map ("+minimum+" tiles)");
+        check(landMass(stage,map,35,35,minimum)>=minimum,"continent around the capital is accepted");
+        check(landMass(stage,map,100,100,minimum)<minimum,"an isolated single-tile island is below the minimum");
+        // 对照实验：直接调用原生选址函数，确认孤立小格确实是它的合格结果（这就是缺陷的来源）。
+        WorldMapAccess access=(WorldMapAccess)map;
+        int specks=0,demoSeed=-1;
+        for(int seed=0;seed<16;seed++){
+            Utils.Pair<Integer,Integer> raw=access.arc$findMapLocationSpot(new GuardedRandom(seed),7,map.empires.get(0));
+            if(raw!=null&&!map.water[raw.b][raw.a]&&landMass(stage,map,raw.a,raw.b,minimum)<minimum){specks++;if(demoSeed<0)demoSeed=seed;}
+        }
+        check(specks>0,"native spot finder accepts isolated single-tile land ("+specks+"/16 seeds, no ARC guard)");
+        // A/B 对照：同一个种子、同一个原生选址函数，唯一差别是中间有没有 ARC 的陆地检查。
+        Utils.Pair<Integer,Integer> rawSpot=access.arc$findMapLocationSpot(new GuardedRandom(demoSeed),7,map.empires.get(0));
+        check(rawSpot!=null&&landMass(stage,map,rawSpot.a,rawSpot.b,minimum)<minimum,
+            "control without the guard: seed "+demoSeed+" places the settlement on an isolated island");
+        @SuppressWarnings("unchecked") Utils.Pair<Integer,Integer> guarded=(Utils.Pair<Integer,Integer>)invoke(stage,"arc$landSpot",map,new GuardedRandom(demoSeed),7,map.empires.get(0),1,map);
+        check(guarded!=null&&landMass(stage,map,guarded.a,guarded.b,minimum)>=minimum,
+            "with the ARC guard: the same seed is retried onto a real landmass ("+guarded.a+","+guarded.b+")");
+        int count=(Integer)invoke(stage,"getSize");
+        for(int i=0;i<count;i++)runStage(stage,i,map);
+        for(City city:map.empires.get(0).cities)check(!map.water[city.y][city.x]&&landMass(stage,map,city.x,city.y,minimum)>=minimum,
+            "player settlement "+city.id+" at "+city.x+","+city.y+" sits on a real landmass");
     }
     /** 在真实放置后验证领土描边；只构造小块归属网格，不冒充完整地形或 GPU 验收。 */
     static void checkTerritoryIds() throws Exception {
@@ -152,6 +205,24 @@ public final class ArcRuntimeProbe {
         reject(()->new StartValues(0,0,0),"zero cities rejected");reject(()->new StartValues(5,0,0),"cities upper bound");
         reject(()->new StartValues(1,9,0),"town upper bound");reject(()->new StartValues(1,0,-2),"cash lower bound");
         reject(()->StartValues.read(new JSONObject().put("cities","2").put("towns",0).put("cash",0)),"string values rejected");
+        reject(()->new StartValues(1,0,0,-1),"negative research rejected");
+        reject(()->new StartValues(1,0,0,StartValues.MAX_RESEARCH+1),"research upper bound");
+        check(StartValues.read(new JSONObject().put("cities",-1).put("towns",-1).put("cash",-1)).research()==0,"missing research key reads as zero");
+        check(!new StartValues(-1,-1,-1,0).grantsResearch()&&new StartValues(-1,-1,-1,1).grantsResearch(),"zero research preserves vanilla");
+        // 研发规模诊断：这个游戏里 1 点研发到底值多少，直接读原生统计值而不是猜。
+        try {
+            Object bonuses=Class.forName("com.zarkonnen.airships.BonusSet").getDeclaredConstructor().newInstance();
+            if(EmpireStat.BASE_RESEARCH_COST!=null&&EmpireStat.RESEARCH_COST_MULTIPLIER!=null){
+                int scaleBase=(Integer)EmpireStat.BASE_RESEARCH_COST.get((BonusSet)bonuses);
+                double scaleMult=(Double)EmpireStat.RESEARCH_COST_MULTIPLIER.get((BonusSet)bonuses);
+                long tier0=(long)(scaleBase*scaleMult*5600.0*StrictMath.pow(EmpireStat.RESEARCH_COST_EXPONENT,0));
+                System.out.println("INFO ARC: tier0 tech cost = "+tier0+" research points, tier1 = "
+                    +((long)(scaleBase*scaleMult*5600.0*StrictMath.pow(EmpireStat.RESEARCH_COST_EXPONENT,1))));
+                // 开局研发点的上限必须和游戏自身的技术成本同量级，否则进度条上根本看不出变化。
+                check(StartValues.MAX_RESEARCH>=tier0/4,
+                    "starting research range is within scale of a real technology ("+StartValues.MAX_RESEARCH+" vs tier0 "+tier0+")");
+            }
+        } catch(Exception scaleFailure) { System.out.println("INFO ARC: research scale unavailable: "+scaleFailure); }
         Loadable.map=new HashMap<>();Loadable.alls=null;
         entry(DifficultyLevel.class,"NORMAL");entry(MonsterSetting.class,"DEFAULT");entry(SeaLevelSetting.class,"MIXED");
         entry(FrequencySetting.class,"DEFAULT");entry(TechSpeedSetting.class,"NORMAL");entry(EraModifier.class,"NO_BONUS");entry(StrategicEra.class,"INITIAL");
@@ -162,10 +233,10 @@ public final class ArcRuntimeProbe {
         CampaignWorld vanilla=newWorld(new StartValues(-1,-1,-1));
         check(vanilla.map.size==base,"defaults preserve global size identity");
         CampaignWorld cashOnly=newWorld(new StartValues(-1,-1,0));check(cashOnly.map.size==base,"cash only does not alter map");
-        CampaignWorld world=newWorld(new StartValues(3,3,12345));WorldMap map=world.map;
+        CampaignWorld world=newWorld(new StartValues(3,3,12345,777));WorldMap map=world.map;
         check(map.size!=base&&map.size.townsPerEmpire==5&&base.townsPerEmpire==2,"per-map capacity expanded, global unchanged");
         check(map.size.gridSize==base.gridSize&&map.size.empires==base.empires,"geometry and empire count unchanged");
-        rules.update(new StartValues(1,0,0).json());check(StartingOptions.forMap(map).equals(new StartValues(3,3,12345)),"candidate change cannot change frozen map rules");
+        rules.update(new StartValues(1,0,0,0).json());check(StartingOptions.forMap(map).equals(new StartValues(3,3,12345,777)),"candidate change cannot change frozen map rules");
         check(newWorld(new StartValues(-1,-1,-1)).map.size==base,"next vanilla campaign not polluted");
         reject(()->MapLayout.read(base,new JSONObject().put(MapLayout.KEY,new JSONObject().put("version",2).put("slots",5))),"unknown layout version rejected");
         reject(()->MapLayout.read(base,new JSONObject().put(MapLayout.KEY,new JSONObject().put("version",1).put("slots",500))),"invalid layout capacity rejected");
@@ -176,13 +247,13 @@ public final class ArcRuntimeProbe {
         SavedStateOutPipe state=new SavedStateOutPipe();JSONObject stateMap=read.toJSON(state);state.compileAndGetHash();
         WorldMap restored=new WorldMap(stateMap,null,new JSONObjectInPipe(state.toJSON()));
         check(restored.size.townsPerEmpire==5,"native binary state reconstruction retains capacity");
-        check(StartingOptions.forMap(restored).equals(new StartValues(3,3,12345)),"native reconstruction retains shared rules");
+        check(StartingOptions.forMap(restored).equals(new StartValues(3,3,12345,777)),"native reconstruction retains shared rules");
         Path saveDir=Files.createDirectories(AGame.getGameDirectory().toPath().resolve("saves")).resolve("arc-test.json");
         IODirectory output=new IODirectory(saveDir.toFile(),map.worldID);JSONObject worldJson=world.toJSON(output);
         output.registerWithoutVersion(id->worldJson,"world");output.write();
         var input=OpenGameMission.load(saveDir.toFile());CampaignWorld loaded=new CampaignWorld(input.a,null,true,input.b);
         check(loaded.map.size.townsPerEmpire==5,"native disk save/load retains layout");
-        check(StartingOptions.forMap(loaded.map).equals(new StartValues(3,3,12345)),"native disk save/load uses saved values");
+        check(StartingOptions.forMap(loaded.map).equals(new StartValues(3,3,12345,777)),"native disk save/load uses saved values");
         map.empires.add(empire(true,0));map.empires.add(empire(false,1));
         Object townStage=stage(map,2);map.r=new GuardedRandom(123);
         check(runStage(townStage,5,map),"AI expanded slot skipped by actual native stage");
@@ -206,16 +277,36 @@ public final class ArcRuntimeProbe {
         human.cities.add(town);human.cities.add(new City(8,1,1,"town2",true,8,null,0));human.cities.add(new City(10,1,1,"town3",true,8,null,0));
         map.campaignWorldDuringGen=world;world.setupPlayer();
         check(human.getMoney()==12345&&map.empires.get(1).getMoney()==777,"actual CREATED hook sets human cash only");
-        human.setMoney(2);world.setupPlayer();check(human.getMoney()==2,"second setupPlayer cannot regrant cash");
+        // 开局没有选中研究时，原生「选择科技」命令（CampaignWorld 的 set-research 执行器，字节码
+        // 223-312）会先把 researchPoints 覆盖成 partialResearchPoints 里新研究的值（新研究通常没有
+        // 记录，即 0），然后才把 unassignedResearchPoints 整池加进去并清零。所以直接写
+        // researchPoints 会在玩家第一次点科技时被清掉——这就是"发了研发点却拿不到"的原因。
+        check(human.research==null,"campaign starts without a selected research");
+        check(human.unassignedResearchPoints==777&&human.researchPoints==0&&map.empires.get(1).unassignedResearchPoints==0,
+            "actual CREATED hook banks human research in the native unassigned pool only");
+        set(human,Empire.class,"partialResearchPoints",new HashMap<>());
+        human.researchPoints=777;human.unassignedResearchPoints=0;
+        human.researchPoints=human.partialResearchPoints.containsKey(null)?human.partialResearchPoints.get(null):0;
+        check(human.researchPoints==0,"direct researchPoints grant is wiped by the native selection command (old bug)");
+        human.researchPoints=0;human.unassignedResearchPoints=777;
+        human.researchPoints+=human.unassignedResearchPoints;human.unassignedResearchPoints=0;
+        check(human.researchPoints==777&&human.unassignedResearchPoints==0,
+            "banked pool is poured into the first selected tech by the native transfer");
+        human.setMoney(2);human.unassignedResearchPoints=0;human.researchPoints=0;world.setupPlayer();
+        check(human.getMoney()==2&&human.unassignedResearchPoints==0&&human.researchPoints==0,
+            "second setupPlayer cannot regrant cash or research");
         map.campaignWorldDuringGen=null;
         CampaignWorld zero=newWorld(new StartValues(1,0,0));zero.map.empires.add(empire(true,0));zero.map.empires.add(empire(false,1));
         check(runStage(stage(zero.map,2),0,zero.map),"zero player towns skips first slot");
         zero.map.campaignWorldDuringGen=zero;zero.setupPlayer();check(zero.map.empires.get(0).getMoney()==0,"zero cash is valid");
+        check(zero.map.empires.get(0).researchPoints==0&&zero.map.empires.get(0).unassignedResearchPoints==0,
+            "zero research leaves both native pools untouched");
         ModConfig config=(ModConfig)field(null,StartingOptions.class,"config");
-        config.save(config.read(),new StartValues(2,1,456).json());config.reload();check(StartValues.read(config.read().data()).equals(new StartValues(2,1,456)),"real config persistence");
+        config.save(config.read(),new StartValues(2,1,456,900).json());config.reload();check(StartValues.read(config.read().data()).equals(new StartValues(2,1,456,900)),"real config persistence");
         check(placeAll().equals(placeAll()),"same seed and settings produce identical native placements with isolated asset fixtures");
         check(generatedLand==14&&generatedCityLand==4,"actual native placement reaches land hook with correct city types");
         checkTerritoryIds();
+        checkLandPlacement();
         System.out.println("ARC RUNTIME PASS: "+checks+" checks");
     }
 }
