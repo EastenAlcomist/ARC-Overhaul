@@ -2,11 +2,17 @@
 
 独立的 Airships 大修 MOD，正式名称 **ARC Overhaul**，中文 **ARC 大修**，不要自行解释或扩展 ARC 缩写。MOD ID `arc_overhaul`，基于 Acbric dev.21，JDK 21。自有源码与文档采用用户选定的 MIT；第三方 wrapper 保留原许可证。本项目是独立 Git 仓库，协作基线为 `main`。禁止把功能 MOD 加入 Acbric 框架默认包。
 
+2026-09-27 新增 AI 舰队设置（未提交）：列出游戏已加载的每支 `ConstructionStrategy`，逐支「允许 / 强制启用 / 强制禁用」三态，强制启用可填出场国家数。设置页 `conquest/FleetOptions.java` + 纯数据 `conquest/FleetPlan.java`，注入 `mixin/FleetAssignmentMixin.java`（`WorldMap$2.run` 的 `ArrayList.get` 第 1 个调用点，ordinal=1）。必须在这里改写：`Empire.constructionStrategy` 是 `public final`。规则经共享规则随战役冻结，因此共享规则改成「开局设置 + 舰队」同一份 JSON（框架每个 MOD ID 只允许注册一次）；版本仍为 1，缺 `fleets` 键按全部允许读取，旧战役不受影响。默认设置提前返回、不消耗随机数。游戏 1.2.15.2 / API dev.21 通过 506 项（426 + 80），版本升至 dev.5，证据 `build/runtime-tests/fleet-final2/summary.json`（JAR SHA256 `151ce2348349b4e0d40976ea492c2ce8ae3a3a28d560f620202a5a46595eaa02`）；注入落点由解析发行版字节码断言（`run` 有四个 `ArrayList.get`，强转 `ConstructionStrategy` 的是第 1 个）。本机只有一份游戏构建，未重跑 1.2.14；AI 舰队目录在夹具里是合成登记，未端到端跑原生势力创建阶段。用户在 `feat1` 之外的分支上工作前先确认当前分支。
+
 2026-09-26 PR #1 已合并为 `b963e85`：新地图定居点连续 ID 修复领土缺色，不重排旧存档。用户确认该修复实机正常，未提供完整版本/场景矩阵。后续测试修订在 API dev.25、游戏 1.2.15.2 / 1.2.14 各通过 407 项，共 814 项；结果 `build/runtime-tests/pr1-contiguous-final/summary.json`，旧 dev.3 JAR 在新断言处按预期失败。包含 33 组布局和真实原生描边，但归属网格为合成输入，不扩大完整世界/GPU/联机覆盖。以下 71/142 数字为历史基线；当前测试范围见 TESTING。
 
 2026-09-26 dev.3 整理命名与协作工程，保留 dev.2 的征服开局城市/城镇/现金行为。仅人类势力，AI 保持原版规则。三个字段 -1 保留原版，自定义 1–4 城市、0–8 城镇、0–1000000 现金。旧参考为 acbric-starting-cities.jar 0.3.1，已研究并声明冲突，不能与本 MOD 同时启用。另一份 City Upgrade 是建筑升级链项目。研究文件不在 Git 中。
 
 文档入口 README / CONTRIBUTING / RESEARCH / TESTING / CHANGELOG，均有英文与 zh-CN 版本。原生设置列表底部及 MOD 详情入口打开框架设置页。dev.3 两版各 71 项（142 项）通过，证据为本地 `build/runtime-tests/repo-init/summary.json`（不提交运行夹具），摘要见 CHANGELOG。真实原生放置/保存/状态恢复已测，但纹章/背景/土地资源有测试替身；完整世界、道路、初始资产、GPU 和联机仍待实机，不扩大验收范围。
+
+AI 舰队设置页的两项人机工效需求受框架限制，不要在 MOD 侧硬凑：框架画布适配层 `NativeUiCanvas.text` 绘制文字时忽略 `enabled`（失效文字不会变灰，而且方括号被转义、无法注入富文本颜色），`UiRuntime` 切换焦点也没有任何回调（拿不到失焦）。ARC 现有做法是：输入框原样显示草稿（允许空）、空值不算错误也不写 0、在玩家能做观察到的下一次操作时复原。框架源码是 dev.33 而实际构建并安装的是 dev.21（都验证过）：2026-09-27 实测 `Ac source/Acbric` 的 `build.cmd` 19 秒构建成功，ARC 在 dev.33 上照样 **506 项全通过**（`build/runtime-tests/fleet-dev33/summary.json`），也就是说「改框架」这条路技术上很便宜；但替换游戏里的 API jar 会把 dev.22–dev.33 一并带进用户环境，必须由用户决定，不要擅自安装。
+
+AI 舰队在 `WorldMap$2.run` 的舰队取用点上按 ordinal 定位；原生方法里有四个 `ArrayList.get`（城市名、舰队、科技选项、英雄），序号漂移时处理函数里的 `instanceof ConstructionStrategy` 守卫会退回原版行为。被强制启用的舰队同时退出随机池，被禁用的永不出现，候选全空时保留原版选择而不是让生成失败。
 
 数量在首次 doSetup 用已冻结共享规则固定，独立 MapSize 容量副本覆盖全原生数组/阶段/巢穴 ID 逻辑；不能修改全局 MapSize。WorldMap$3 放置前后控制槽位与城市类型，祭坛不足保护在 $4。现金使用 CREATED，不能挂 StrategicScreen 构造器。原生恢复早期需要 arcStartingLayout 技术字段；不要移到构造 RETURN 后才修容量。只支持新战役，旧档 RULE_MISSING 不自动转换。联机没有房主参数广播，各端提前手动设置相同值，端到端未验证。
 
