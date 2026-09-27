@@ -526,8 +526,75 @@ public final class ArcRuntimeProbe {
     }
     static int readU2(byte[] code,int at){return ((code[at]&0xff)<<8)|(code[at+1]&0xff);}
     static long readU4(byte[] code,int at){return ((long)(code[at]&0xff)<<24)|((code[at+1]&0xff)<<16)|((code[at+2]&0xff)<<8)|(code[at+3]&0xff);}
+    /**
+     * 相对坐标航点：在真实内核类上直接调用注入后的处理函数。
+     *
+     * <p>不启动战斗。注入只读写 {@code strafeTo}、{@code attackTarget} 与三个 {@code @Unique}
+     * 锚点字段，因此用 Unsafe 造一个 Crewman、把目标 x 直接写进 PhysicsRect 就足以验证行为。
+     * 核心不变量是「航点与目标的偏移量恒定」：原生正是靠比较航点与目标包围盒判断这一趟是否作废
+     * （第 2562 行），偏移量恒定就意味着目标移动再也无法作废航点。</p>
+     */
+    static void checkAircraftStrafe() throws Exception {
+        Class<?> crewman=Class.forName("com.zarkonnen.airships.Crewman");
+        StringBuilder members=new StringBuilder();
+        Method follow=null;
+        // 处理器名可能被 Mixin 修饰，按参数签名（int, Combat, Combat$Side, boolean, CallbackInfoReturnable）定位更稳。
+        for(Method m:crewman.getDeclaredMethods()){
+            if(m.getName().contains("arc$")) members.append(m.getName()).append('/').append(m.getParameterCount()).append(' ');
+            Class<?>[] ps=m.getParameterTypes();
+            if(ps.length==5&&ps[0]==int.class&&ps[4].getName().endsWith("CallbackInfoReturnable")) follow=m;
+        }
+        check(follow!=null,"real mixin transformation: Crewman carries the ARC strafe handler ["+members+"]");
+        follow.setAccessible(true);
+        Class<?> airship=Class.forName("com.zarkonnen.airships.Airship");
+        Class<?> physics=Class.forName("com.zarkonnen.airships.PhysicsRect");
+        Class<?> pointType=Class.forName("com.zarkonnen.catengine.util.Pt");
+        Constructor<?> newPoint=pointType.getDeclaredConstructor(double.class,double.class);
+        Field pointX=pointType.getField("x");
+        Object callback=Class.forName("org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable")
+            .getDeclaredConstructor(String.class,boolean.class).newInstance("arc-probe",false);
+        Object crew=unsafe(crewman);
+        Object target=unsafe(airship);
+        Object first=newPoint.newInstance(1000.0,100.0);
+        set(target,physics,"x",500.0);
+        set(crew,crewman,"strafeTo",first);
+        set(crew,crewman,"attackTarget",target);
+        follow.invoke(crew,16,null,null,false,callback);
+        check(field(crew,crewman,"strafeTo")==first,"the first frame only records the anchor and leaves the point alone");
+        set(target,physics,"x",520.0);follow.invoke(crew,16,null,null,false,callback);
+        Object shifted=field(crew,crewman,"strafeTo");
+        check(shifted!=first&&pointX.getDouble(shifted)==1020.0,
+            "the aim point follows the target's +20 px move and is a new immutable Pt instance");
+        follow.invoke(crew,16,null,null,false,callback);
+        check(pointX.getDouble(field(crew,crewman,"strafeTo"))==1020.0,"a stationary target does not keep shifting the point");
+        // 目标连续移动 1000px：原生在 2×strafeOvershoot=400px 处就会作废航点，这里偏移量必须恒定。
+        for(int step=1;step<=50;step++){
+            set(target,physics,"x",500.0+20*step);follow.invoke(crew,16,null,null,false,callback);
+        }
+        double moved=pointX.getDouble(field(crew,crewman,"strafeTo"))-1500.0;
+        check(moved==500.0,"the target-relative offset survives 1000 px of target movement (native discards it after 400)");
+        // 原版重选航点（目标离开原点位后的常见结果）→ 本帧只做对齐，不平移。
+        Object repick=newPoint.newInstance(4000.0,50.0);
+        set(crew,crewman,"strafeTo",repick);set(target,physics,"x",1600.0);
+        follow.invoke(crew,16,null,null,false,callback);
+        check(field(crew,crewman,"strafeTo")==repick,"a native re-pick is adopted without shifting on the same frame");
+        set(target,physics,"x",1610.0);follow.invoke(crew,16,null,null,false,callback);
+        check(pointX.getDouble(field(crew,crewman,"strafeTo"))==4010.0,"the adopted point follows from the next frame on");
+        // 换目标（母舰 fireAt 改写、原目标阵亡后重选最近邻）→ 不平移，交还原版重新决策。
+        Object other=unsafe(airship);set(other,physics,"x",9000.0);
+        set(crew,crewman,"attackTarget",other);set(target,physics,"x",2000.0);
+        follow.invoke(crew,16,null,null,false,callback);
+        check(pointX.getDouble(field(crew,crewman,"strafeTo"))==4010.0,"a new target re-anchors instead of dragging the old run");
+        // 无目标/无航点：原版巡逻分支与一切非攻击状态必须完全不受影响。
+        set(crew,crewman,"attackTarget",null);set(target,physics,"x",2100.0);
+        follow.invoke(crew,16,null,null,false,callback);
+        check(pointX.getDouble(field(crew,crewman,"strafeTo"))==4010.0,"no target leaves the patrol point untouched");
+        set(crew,crewman,"strafeTo",null);set(crew,crewman,"attackTarget",target);
+        follow.invoke(crew,16,null,null,false,callback);
+        check(field(crew,crewman,"strafeTo")==null,"no aim point is not an error");
+    }
     public static void main(String[] args) throws Exception {
-        for(String name:List.of("WorldMap","WorldMap$2","WorldMap$3","WorldMap$4","GameSetupScreen","CampaignWorld","WorldGenScreen")) {
+        for(String name:List.of("WorldMap","WorldMap$2","WorldMap$3","WorldMap$4","GameSetupScreen","CampaignWorld","WorldGenScreen","Crewman")) {
             Class<?> type=Class.forName("com.zarkonnen.airships."+name);
             check(Arrays.stream(type.getDeclaredMethods()).anyMatch(m->m.getName().contains("arc$")||m.getName().contains("acbric$")),"real mixin transformation: "+name);
         }
@@ -640,6 +707,7 @@ public final class ArcRuntimeProbe {
         check(generatedLand==14&&generatedCityLand==4,"actual native placement reaches land hook with correct city types");
         checkTerritoryIds();
         checkLandPlacement();
+        checkAircraftStrafe();
         checkFleetOptions();
         checkFleetWindowShape();
         checkFleetEditor();

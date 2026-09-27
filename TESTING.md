@@ -1,11 +1,11 @@
 # ARC Overhaul starting-options test guide
 
-[中文](TESTING.zh-CN.md) · 0.1.0-dev.5 · 2026-09-27
+[中文](TESTING.zh-CN.md) · 0.1.0-dev.6 · 2026-09-27
 
 ## Install and open
 
 1. Exit the game. Use API dev.21 or later compatible. Disable Starting Cities and restart, or keep its JAR outside `mods/`. Install only one ARC version.
-2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.5.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
+2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.6.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
 3. Start a new single-player conquest setup. Scroll its settings list to the bottom and select **ARC Overhaul: Player starting options**, or use **MOD list → ARC Overhaul → Details**.
 4. Edit, Apply, close, then use the native Start button. `-1` preserves that field's vanilla value; fields are independent.
 5. Do the same with the second entry, **ARC Overhaul: AI fleets**; it lists every loaded AI fleet and is described in [AI fleets](README.md#ai-fleets).
@@ -23,6 +23,7 @@
 | Research 0 | No research is granted; the tech screen behaves exactly like vanilla |
 | Research -1, letters, over 10000000 | Rejected in the field or on Apply; previous values remain |
 | Extra towns on a map with small islands | No player settlement sits on a speck connected to nothing; AI placement is unchanged |
+| Bombers attacking a moving enemy ship | Bombers finish their pass instead of turning around far short of the target; they still turn after crossing it, as vanilla does. Compare a slow target (near-stationary) with a fast one moving away: the run length should not collapse |
 | Cities changed, towns -1 | Additional cities plus the map-default number of towns |
 | Zero cities, letters, fractions, out-of-range | Rejected in the field or on Apply; previous values remain |
 | Cancel / Esc / X after editing | Confirmed discard preserves previous values; Enter does not start a campaign through the editor |
@@ -62,6 +63,8 @@ The injection point is asserted by parsing the shipped `WorldMap$2` class file: 
 After merging PR #1, game 1.2.15.2 / 1.2.14 each pass **407 checks**, **814 total**, using Acbric API `0.3.3-dev.25` and JDK 21. Local results: `build/runtime-tests/pr1-contiguous-final/summary.json`. The original dev.3 result of 71 checks per build is historical.
 
 The 33 added layouts cover two/four empires, different human positions, extra/reduced/zero towns, maximum counts, defaults/cash-only/explicit vanilla counts, and native AI placement failure. They check counts, types, unique contiguous IDs, city-cache identity, default placement/RNG equivalence, and directly invoke native `ShapeUtils.cityOwnershipAreas` to check that every settlement receives an area. Running the same test against the pre-fix dev.3 JAR fails the new contiguous-ID assertion as expected (local `pr1-negative-old-mod` evidence).
+
+Aircraft strafe anchoring adds 11 checks (the Crewman transformation plus 10 assertions) and does not start a battle: they fabricate a `Crewman` and an `Airship` with `Unsafe`, write the target's x straight into `PhysicsRect`, and invoke the injected handler with a real `CallbackInfoReturnable`. They assert the target-relative offset stays exactly constant across 1000 px of target movement, that a stationary target does not keep shifting the point, that a native re-pick and a target switch re-anchor without shifting, and that a null target or null aim point is a no-op. What they do **not** cover: a live `Combat`, the steering loop that acts on the shifted point, and therefore the actual turn-around in a real battle — that still needs manual gameplay testing.
 
 Real Fabric transformations, native placement, CREATED, disk saves and binary state reconstruction run with test-only arms/background/land fixtures. Territory tracing uses separated single-cell ownership fixtures retaining actual settlement IDs, not full territory influence generation. Automated coverage does not include full terrain, roads, initial assets, GPU or multiplayer sessions.
 
