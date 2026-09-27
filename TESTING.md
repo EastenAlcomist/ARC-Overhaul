@@ -1,13 +1,14 @@
 # ARC Overhaul starting-options test guide
 
-[中文](TESTING.zh-CN.md) · 0.1.0-dev.4 · 2026-09-26
+[中文](TESTING.zh-CN.md) · 0.1.0-dev.5 · 2026-09-27
 
 ## Install and open
 
 1. Exit the game. Use API dev.21 or later compatible. Disable Starting Cities and restart, or keep its JAR outside `mods/`. Install only one ARC version.
-2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.4.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
+2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.5.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
 3. Start a new single-player conquest setup. Scroll its settings list to the bottom and select **ARC Overhaul: Player starting options**, or use **MOD list → ARC Overhaul → Details**.
 4. Edit, Apply, close, then use the native Start button. `-1` preserves that field's vanilla value; fields are independent.
+5. Do the same with the second entry, **ARC Overhaul: AI fleets**; it lists every loaded AI fleet and is described in [AI fleets](README.md#ai-fleets).
 
 ## Manual checks
 
@@ -31,6 +32,19 @@
 | Spend money/change territory, save/reload A | Actual state restored without starting grants or repeated conversion on strategy-screen entry |
 | Restart | Applied preferences persist; damaged files not silently overwritten |
 | Insufficient space | Actionable failure, no mismatched partial campaign saved as successful |
+| AI fleets: everything left on Allow | AI fleets on the map are indistinguishable from a vanilla run with the same seed |
+| AI fleets: one fleet Force disabled, new campaign | That fleet is never on the map, however many starts you try |
+| AI fleets: one fleet Force enabled with 3, new campaign | Exactly three non-player countries use it; your own country does not |
+| AI fleets: count larger than the number of AI countries | Every AI country gets it; no error, and no leftover quota carries into the next campaign |
+| AI fleets: every candidate for an empire banned | The campaign still generates; the log records the fallback instead of an error |
+| AI fleets: fleet pack disabled, reopen the screen | The fleet disappears from the list; re-enabling the pack restores its previous setting |
+| AI fleets: Cancel / Esc / X after editing | Confirmed discard preserves previous values |
+| AI fleets: change game language and reopen | Fleet list, three states and buttons follow the game language |
+| AI fleets: Force disable all, then Apply | No loaded AI fleet appears on the map |
+| AI fleets: Force enable all, then Apply | Each AI country gets a different fleet from the list until the fleets run out |
+| AI fleets: clear a country count and type a new one | The box stays empty while you type instead of snapping back; the new number is used |
+| AI fleets: clear a country count, then type in another fleet | The cleared box shows its previous number again |
+| AI fleets: clear a country count, then press Apply | Nothing is lost: that fleet keeps the number it had before you cleared it |
 
 Start with a medium map and the first three scenarios, then test minimum/maximum sizes. Record seed, difficulty and values. Changed parameters alter random draws; AI positions and assets need not match another run exactly.
 
@@ -42,6 +56,9 @@ Full multiplayer remains unverified. Optional testing requires matching ARC/API 
 
 ## Automated coverage and diagnostics
 
+The AI fleet change runs **506 checks** on game 1.2.15.2 with Acbric API `0.3.3-dev.21` — the previous 426 plus 80 fleet assertions (`build/runtime-tests/fleet-final2/summary.json`). They cover rule parsing/round-trip and rejection of invalid modes, counts and unknown keys; the settings window built on the real config handle in both languages and its component tree walked node by node (one row per loaded fleet, each row a label plus a three-state chooser plus an editable country-count field that starts at 1 and stays disabled until the fleet is force-enabled); the draft session driven through its real editor (invalid counts block saving, saving writes the file and publishes the shared rules, a rule for a fleet that is no longer loaded survives both, reload discards the draft and defaults clear everything); real config-file persistence; the real shared-rule payload carrying starting values and fleet rules together; the country-count box keeping its raw contents (clearing it does not snap back, an empty box reports no error and does not block Apply, an out-of-range or non-numeric entry does, and an empty box is restored once you type elsewhere or press a button or Apply), the bulk force-disable-all / force-enable-all actions, and the selection function itself against real `Loadable` lookups, real map `GuardedRandom` draws and real frozen campaign rules — default rules return the native pick without consuming a random draw, a banned fleet never appears, a force-enabled fleet lands on exactly its country count and is not also handed out at random, the player's country is skipped, and an unloaded fleet only clears its quota.
+
+The injection point is asserted by parsing the shipped `WorldMap$2` class file: `run(ILcom/zarkonnen/airships/WorldMap;)Z` contains four `ArrayList.get` call sites, and the only one whose result is cast to `ConstructionStrategy` is call site **#1** — exactly what `ordinal = 1` selects. What is **not** automated: the fixture has no `ConstructionStrategy` data directory, so the fleet catalogue is registered synthetically, and the native empire-creation stage (`WorldMap$2.run`) is not executed end to end because it needs arms assets the harness does not provide. Only one game build is installed on this machine, so 1.2.14 was not re-run for this change, and the two new buttons in the native settings list were not driven headlessly — the window behind the second button is checked, the native list row that opens it is not.
 After merging PR #1, game 1.2.15.2 / 1.2.14 each pass **407 checks**, **814 total**, using Acbric API `0.3.3-dev.25` and JDK 21. Local results: `build/runtime-tests/pr1-contiguous-final/summary.json`. The original dev.3 result of 71 checks per build is historical.
 
 The 33 added layouts cover two/four empires, different human positions, extra/reduced/zero towns, maximum counts, defaults/cash-only/explicit vanilla counts, and native AI placement failure. They check counts, types, unique contiguous IDs, city-cache identity, default placement/RNG equivalence, and directly invoke native `ShapeUtils.cityOwnershipAreas` to check that every settlement receives an area. Running the same test against the pre-fix dev.3 JAR fails the new contiguous-ID assertion as expected (local `pr1-negative-old-mod` evidence).

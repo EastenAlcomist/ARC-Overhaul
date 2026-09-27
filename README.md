@@ -2,13 +2,15 @@
 
 [中文](README.zh-CN.md)
 
-A standalone gameplay MOD, separate from Acbric. **0.1.0-dev.4** implements starting cities, towns, cash and research points for **human empires only**. AI starting counts and cash rules remain vanilla, although changes in placement and random draws can alter AI positions and asset combinations for the same seed.
+A standalone gameplay MOD, separate from Acbric. **0.1.0-dev.5** implements starting cities, towns, cash and research points for **human empires only**, plus full control over **which AI fleets appear on the map**. AI starting counts and cash rules remain vanilla, although changes in placement and random draws can alter AI positions and asset combinations for the same seed.
 
 ## Use
 
-Requires Acbric API **0.3.3-dev.21 or a later compatible version** and Java 21. Exit the game and place `build/libs/ARC-Overhaul-0.1.0-dev.4.jar` in its `game/mods/`. Disable the old `acbric-starting-cities.jar` and restart first; the MODs declare a conflict. Do not install the dev.1 scaffold or fixture JARs.
+Requires Acbric API **0.3.3-dev.21 or a later compatible version** and Java 21. Exit the game and place `build/libs/ARC-Overhaul-0.1.0-dev.5.jar` in its `game/mods/`. Disable the old `acbric-starting-cities.jar` and restart first; the MODs declare a conflict. Do not install the dev.1 scaffold or fixture JARs.
 
 Open **single-player conquest setup → scroll the settings list to the bottom → ARC Overhaul: Player starting options**, or **MOD list → ARC Overhaul → Details**. Edit, Apply, close, then start a new campaign. English/Chinese follow the game language.
+
+The same list has a second entry, **ARC Overhaul: AI fleets**, described below.
 
 | Field | Custom range | Meaning of `-1` |
 |---|---|---|
@@ -25,9 +27,30 @@ ARC-added settlements are never placed on a speck of land: the native spot finde
 
 Count limits are conservative. Insufficient space aborts generation instead of silently producing fewer settlements. More than 128 MiB of additional distance-array capacity is rejected; this is not a total game-memory limit.
 
+## AI fleets
+
+An "AI fleet" is the game's `ConstructionStrategy`: the ships, landships, buildings and tech trees one empire will use. Every conquest game hands each empire a fleet picked at random out of the loaded ones, filtered only by the empire's heraldic charge and the difficulty — the player has no say in it. **ARC Overhaul: AI fleets** lists every loaded fleet with three states:
+
+| State | Effect |
+|---|---|
+| Allow | May be picked at random. This is the default and is exactly vanilla. |
+| Force enable | Reserved: removed from the random pool and handed to exactly the number of countries you type in. |
+| Force disable | Never appears on the map. |
+
+The country count is a number of **non-player** countries; your own country always keeps the vanilla fleet. Because a force-enabled fleet leaves the random pool, entering `3` yields exactly three countries with that fleet, not "at least three". If every fleet available to an empire ends up banned or reserved, ARC keeps the vanilla pick instead of failing generation. With default settings ARC returns before it touches anything, so no random draw is consumed and a seed still produces the vanilla world.
+
+Fleets are listed by the name the game loaded them under, which is what AI fleet packs ship. Settings live in `game/config/arc_overhaul/conquest-fleets.json`; only fleets you changed are written, and entries for fleets from a temporarily disabled MOD are kept.
+
+### Bulk actions and the country-count box
+
+The footer has **Force disable all** and **Force enable all**: one click marks every loaded fleet. Force-enable-all keeps each fleet's current country count (falling back to its last valid number), so it does not wipe numbers you already typed.
+
+The country-count box can be cleared and retyped: it shows exactly what you typed, empty included. An empty box is never an error and is never saved as 0 — it keeps the last valid number. An error appears only for something you really typed wrong (a non-number, or a value outside 1–32) and Apply stays blocked until you fix it. Empty boxes are also restored to the deleted number as soon as you do anything else: type in another box, press any button, or Apply.
+
+Two smaller things are **not** done, because they need Acbric changes: the box cannot be painted grey while it is inactive (the framework's canvas adapter ignores its `enabled` flag when painting glyphs, and it escapes square brackets so a MOD cannot inject the game's rich-text colour codes), and the number is not restored the instant you click into another box without typing (the framework changes focus with no callback). See the changelog for the framework versions involved before deciding to change it.
 ## Saves and multiplayer
 
-- Preferences live in `game/config/arc_overhaul/conquest-start.json`. Acbric freezes shared rules for new campaigns; later preference changes do not affect existing campaigns.
+- Preferences live in `game/config/arc_overhaul/conquest-start.json` (starting values) and `game/config/arc_overhaul/conquest-fleets.json` (AI fleets). Acbric freezes shared rules for new campaigns — both files are frozen together — so later preference changes do not affect existing campaigns.
 - This version targets new campaigns. Old saves without ARC rules fail with `RULE_MISSING`; no automatic conversion occurs. Disable ARC and restart to play old saves. No ARC-specific migration tool is included.
 - Keep ARC installed for ARC campaigns. Loading/restoring never redistributes land or grants starting cash. Expanded ID capacity uses the technical `arcStartingLayout` save field.
 - Multiplayer uses existing rule checks, not host configuration broadcasting. All peers must set matching values through MOD Details before joining. No lobby editor is added; full multiplayer generation/resume remains unverified. Test single-player first.
@@ -43,7 +66,7 @@ Use JDK 21 and a matching Acbric API dev.21 build. See [contributor setup](CONTR
 .\gradlew.bat build -PacbricDir="D:/Development/Acbric" -PgameLibDir="D:/Games/Airships/libs"
 ```
 
-Output: `build/libs/ARC-Overhaul-0.1.0-dev.4.jar`. Replace the previous ARC JAR instead of installing both. Game, framework and test classes are not bundled. Nothing is automatically installed. `build` checks compilation/packaging; its default `test` has no sources. Run [integration tests](TESTING.md#run-isolated-checks-windows) separately with your own game inputs.
+Output: `build/libs/ARC-Overhaul-0.1.0-dev.5.jar`. Replace the previous ARC JAR instead of installing both. Game, framework and test classes are not bundled. Nothing is automatically installed. `build` checks compilation/packaging; its default `test` has no sources. Run [integration tests](TESTING.md#run-isolated-checks-windows) separately with your own game inputs.
 
 PR #1 fixes missing territory colour for extra towns, with manual confirmation from the user. Both game builds (1.2.15.2 / 1.2.14) pass 407 targeted checks each, 814 total, using API dev.25: real Fabric transformation, native placement/contiguous IDs, territory tracing, one-time cash, configuration and native disk/binary-state persistence. Arms/background/land resources use fixtures and territory tracing uses synthetic ownership grids; full map/roads/initial-assets generation, GPU and multiplayer are not comprehensively verified. See [testing](TESTING.md).
 

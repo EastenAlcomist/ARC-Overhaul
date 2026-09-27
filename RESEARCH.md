@@ -47,6 +47,23 @@ Configuration/UI/shared rules reuse public APIs. A technical `arcStartingLayout=
 
 Test vanilla-default equivalence, count bounds/zero towns, insufficient space, consecutive worlds, exact cash, save/load without repeated application, bilingual UI/scroll/Enter behavior and any multiplayer paths explicitly supported. Do not claim universal compatibility with map sizes or other world-generation MODs.
 
+## AI fleets (ConstructionStrategy)
+
+2026-09-27. An "AI fleet" in the game's own terms is a `ConstructionStrategy` — the class the AI Fleet Creator produces. It carries `shipNames`, `landshipNames` and `buildingNames` per tier, upgrade sequences, `techs`, `charges`/`requiredCharge`, `minDifficultyLevel`/`maxDifficultyLevel` and an `enabled` flag. `Loadable.all(ConstructionStrategy.class)` is the live catalogue; fleet packs ship a `ConstructionStrategy/` data directory, which is why the list grows with installed MODs.
+
+Where the game assigns one:
+
+| Location | Detail |
+|---|---|
+| `WorldMap$2.run(int, WorldMap)` | The `SetupStage` that creates one empire per call. It builds `ArrayList<ConstructionStrategy> strategies = ConstructionStrategy.forCharge(arms.getActiveCharge(), map.difficulty)` and passes `strategies.get(map.r.nextInt(strategies.size()))` to the `Empire` constructor. |
+| `ConstructionStrategy.forCharge(Charge, DifficultyLevel)` | Three passes over the catalogue, each requiring `enabled` and the difficulty window; pass one also requires the heraldic charge to match (`charges.contains(charge)`, or `requiredCharge == charge`), pass two accepts strategies with a null `requiredCharge`, and an empty result makes the native `nextInt(0)` throw. |
+| `Empire.constructionStrategy` | `public final`, assigned in the constructor — the fleet cannot be replaced once an empire exists. |
+| `AIConstructionUtils`, `CityAI`, `StrategicAI` | Read the field at runtime to decide what the AI builds and researches. |
+
+Four `ArrayList.get` calls exist inside `run`: city names (offset 312), the fleet list (420), tech choices (786) and heroes (1340). Since they are byte-identical `INVOKEVIRTUAL java/util/ArrayList.get:(I)Ljava/lang/Object;` instructions, a `@Redirect` has to select one by `ordinal`; ARC uses `ordinal = 1` and type-guards the receiver so a future drift degrades to vanilla behaviour instead of mis-reading another list. The checked-in probe parses the shipped class file and asserts both the count (four) and the position (only the site followed by `checkcast ConstructionStrategy` is #1).
+
+Settings are stored separately from the starting values but travel with them: the Acbric shared-rules registry allows one declaration per MOD ID, so ARC merges both into a single JSON payload. The rule version stays 1, and a payload without the `fleets` key reads as "all allowed", so campaigns saved earlier keep loading.
+
 ## Evidence so far
 
 The feature builds offline with JDK 21 / Gradle 8.13. Historical evidence for dev.1/dev.2 is privately retained by the maintainer; the original dev.3 baseline passed 71 checks per game build. After merging PR #1, contiguous-ID/tracing regressions pass 407 checks per build with API dev.25, and the user confirmed the territory-colour fix manually. See [TESTING](TESTING.md) for reproduction, test fixtures, synthetic ownership grids and limits on full terrain/roads/initial-assets/GPU/multiplayer coverage. Results are written to `build/runtime-tests/<tag>/summary.json`.

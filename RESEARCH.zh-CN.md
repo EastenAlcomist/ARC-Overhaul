@@ -52,6 +52,23 @@
 
 未新增框架通用接口。旧 Starting Cities 已在 metadata 中声明冲突；其他世界生成 MOD 不保证兼容。详细操作和验收见 README / TESTING 双语文档。
 
+## AI 舰队（ConstructionStrategy）
+
+2026-09-27。游戏里说的「AI 舰队」就是 `ConstructionStrategy`——AI Fleet Creator 工具产出的那个类。它按等级保存 `shipNames`、`landshipNames`、`buildingNames` 与升级序列，还带 `techs`、`charges`/`requiredCharge`、`minDifficultyLevel`/`maxDifficultyLevel` 和 `enabled` 开关。`Loadable.all(ConstructionStrategy.class)` 就是当前实际加载的目录；舰队包自带一个 `ConstructionStrategy/` 数据目录，所以这份列表会随启用的 MOD 变化。
+
+原生在哪里分配：
+
+| 位置 | 说明 |
+|---|---|
+| `WorldMap$2.run(int, WorldMap)` | 每次调用创建一个势力的 `SetupStage`。它构造 `ArrayList<ConstructionStrategy> strategies = ConstructionStrategy.forCharge(arms.getActiveCharge(), map.difficulty)`，再把 `strategies.get(map.r.nextInt(strategies.size()))` 交给 `Empire` 构造器。 |
+| `ConstructionStrategy.forCharge(Charge, DifficultyLevel)` | 对目录做三趟过滤，每趟都要求 `enabled` 与难度区间；第一趟还要求军徽图案匹配（`charges.contains(charge)`，或 `requiredCharge == charge`），第二趟接受 `requiredCharge` 为空的舰队；结果为空时原生 `nextInt(0)` 会直接抛异常。 |
+| `Empire.constructionStrategy` | `public final`，在构造器里赋值——势力一旦创建就无法再换舰队。 |
+| `AIConstructionUtils`、`CityAI`、`StrategicAI` | 运行期读这个字段决定 AI 造什么、研究什么。 |
+
+`run` 里一共有四个 `ArrayList.get`：城市名（偏移 312）、舰队列表（420）、科技选项（786）、英雄（1340）。它们是逐字节相同的 `INVOKEVIRTUAL java/util/ArrayList.get:(I)Ljava/lang/Object;`，所以 `@Redirect` 必须靠 `ordinal` 定位；ARC 用 `ordinal = 1`，并在处理函数里做类型守卫，将来序号漂移只会退回原版行为，而不会把别的列表当成舰队。仓库内的探针会解析发行版类文件，同时断言数量（四个）和位置（唯一被 `checkcast ConstructionStrategy` 跟随的是第 1 个）。
+
+舰队设置与开局设置分开存放，但一起随战役固化：Acbric 的共享规则对每个 MOD ID 只允许注册一次，因此 ARC 把两者合并成同一份 JSON 载荷。规则版本保持 1，缺少 `fleets` 键的载荷按「全部允许」读取，此前保存的战役仍可加载。
+
 ## 已完成的验证
 
 JDK 21 / Gradle 8.13 离线构建成功。dev.1/dev.2 历史证据由维护者私有保存，dev.3 原始基线为两版各 71 项。PR #1 合并后的连续 ID/描边回归在 API dev.25、两版游戏上各通过 407 项；用户确认缺色修复实机正常。复现入口、测试替身、合成归属网格及完整地形/道路/初始资产/GPU/联机覆盖边界见[测试手册](TESTING.zh-CN.md)，结果写入 `build/runtime-tests/<tag>/summary.json`。
