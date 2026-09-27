@@ -1,5 +1,7 @@
 # ARC Overhaul 项目指引
 
+2026-09-27 PR #3 / #4 / #5 整合验证：dev.7 同时包含 AI 舰队设置、飞机攻击航点跟随及接地摩擦速度显示。冲突解决保留两项 Mixin 注册及全部测试入口，版本统一为 dev.7，功能源码语义未改。JDK 21 / Acbric API 0.3.3-dev.33 构建成功；游戏 1.2.15.2 / 1.2.14 各通过 529 项，共 1,058 项，证据 `build/runtime-tests/pr3-5-integrated-20260927/summary.json`。舰队登记与部分资源使用测试替身，航点测试直接调用真实注入处理器，未验证完整世界生成、图形战斗、道路/初始资产或端到端联机。未覆盖玩家运行副本。下方各分支早期记录及测试数字为历史。
+
 独立的 Airships 大修 MOD，正式名称 **ARC Overhaul**，中文 **ARC 大修**，不要自行解释或扩展 ARC 缩写。MOD ID `arc_overhaul`，基于 Acbric dev.21，JDK 21。自有源码与文档采用用户选定的 MIT；第三方 wrapper 保留原许可证。本项目是独立 Git 仓库，协作基线为 `main`。禁止把功能 MOD 加入 Acbric 框架默认包。
 
 2026-09-27 新增 AI 舰队设置（未提交）：列出游戏已加载的每支 `ConstructionStrategy`，逐支「允许 / 强制启用 / 强制禁用」三态，强制启用可填出场国家数。设置页 `conquest/FleetOptions.java` + 纯数据 `conquest/FleetPlan.java`，注入 `mixin/FleetAssignmentMixin.java`（`WorldMap$2.run` 的 `ArrayList.get` 第 1 个调用点，ordinal=1）。必须在这里改写：`Empire.constructionStrategy` 是 `public final`。规则经共享规则随战役冻结，因此共享规则改成「开局设置 + 舰队」同一份 JSON（框架每个 MOD ID 只允许注册一次）；版本仍为 1，缺 `fleets` 键按全部允许读取，旧战役不受影响。默认设置提前返回、不消耗随机数。游戏 1.2.15.2 / API dev.21 通过 506 项（426 + 80），版本升至 dev.5，证据 `build/runtime-tests/fleet-final2/summary.json`（JAR SHA256 `151ce2348349b4e0d40976ea492c2ce8ae3a3a28d560f620202a5a46595eaa02`）；注入落点由解析发行版字节码断言（`run` 有四个 `ArrayList.get`，强转 `ConstructionStrategy` 的是第 1 个）。本机只有一份游戏构建，未重跑 1.2.14；AI 舰队目录在夹具里是合成登记，未端到端跑原生势力创建阶段。用户在 `feat1` 之外的分支上工作前先确认当前分支。
