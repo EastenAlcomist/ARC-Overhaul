@@ -25,6 +25,8 @@ Research points are banked into the native *unassigned* research pool (`Empire.u
 
 ARC-added settlements are never placed on a speck of land: the native spot finder accepts any non-water tile, so ARC re-rolls until the tile belongs to a connected landmass of at least `max(32, gridSize/4)` tiles. Retries are bounded and fall back to the last candidate, so the guard can never turn generation into a failure. Only human empires, and only when the counts are customised; AI and default settings keep the untouched native result.
 
+Aircraft keep their attack runs pointed at the target: the native strafe logic stores one world-coordinate aim point per run and discards it once the target has moved 200 px away from it, then re-picks the point purely from which side of the target the aircraft is on — so a drifting target can send the aircraft the other way mid-run, which a bomber (lowest acceleration of the five aircraft, and it must fly straight over the middle of the target to release) pays for with an entire wasted pass. ARC now translates that aim point with the target's own movement, keeping the offset constant. See [CHANGELOG](CHANGELOG.md) for the mechanism and the measurements.
+
 Count limits are conservative. Insufficient space aborts generation instead of silently producing fewer settlements. More than 128 MiB of additional distance-array capacity is rejected; this is not a total game-memory limit.
 
 ## AI fleets
