@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "ARC Overhaul",
   "license": "MIT",
-  "description": "ARC Overhaul: human starting cities, towns, cash and research points / ARC 大修：人类玩家开局城市、城镇、现金与研发点设置。",
+  "description": "ARC Overhaul: human starting cities, towns, cash and research points, plus full control over which AI fleets appear on the map / ARC 大修：人类玩家开局城市、城镇、现金与研发点设置，并可完全控制大地图上出现哪些 AI 舰队。",
   "environment": "client",
   "entrypoints": {"acbric": ["net.poosh.arc.ArcMod"]},
   "mixins": ["arc.mixins.json"],

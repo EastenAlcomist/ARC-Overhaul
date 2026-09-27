@@ -5,7 +5,6 @@ import com.zarkonnen.airships.*;
 import net.fabricacs.api.AcbricModContext;
 import net.fabricacs.api.config.*;
 import net.fabricacs.api.event.AirshipsCampaignEvents;
-import net.fabricacs.api.rules.SharedRules;
 import net.fabricacs.api.ui.*;
 import net.fabricacs.api.util.AcbricLanguage;
 import java.io.IOException;
@@ -13,15 +12,14 @@ import java.util.List;
 
 public final class StartingOptions {
     private static ModConfig config;
-    private static SharedRules rules;
     private static ModUi ui;
     private static AcbricModContext mod;
     private StartingOptions() { }
     public static String text(String en, String zh) { return AcbricLanguage.text(en, zh); }
-    public static void initialize(AcbricModContext context) {
+    /** 只建立配置句柄与界面入口；共享规则由 {@code ArcRules} 在两项设置都就绪后一次性注册。 */
+    public static ModConfig initialize(AcbricModContext context) {
         try {
             config = context.config("conquest-start", 1, new StartValues(-1, -1, -1, 0).json(), StartValues::read);
-            rules = context.sharedRules(1, config.load().data(), StartValues::read);
         } catch (IOException ex) {
             throw new IllegalStateException("Cannot load ARC settings / 无法读取 ARC 配置，未覆盖原文件", ex);
         }
@@ -30,9 +28,10 @@ public final class StartingOptions {
         ui.register("conquest-start", StartingOptions::title, StartingOptions::window);
         AirshipsCampaignEvents.CREATED.register(world -> finish((CampaignWorld) world));
         context.logger().info("ARC starting options loaded / ARC 开局设置已加载");
+        return config;
     }
     public static String title() { return text("ARC Overhaul: Player starting options", "ARC 大修：玩家开局设置"); }
-    public static StartValues forMap(WorldMap map) { return StartValues.read(rules.forCampaign(map).values()); }
+    public static StartValues forMap(WorldMap map) { return ArcRules.startValues(map); }
     public static void open() { ui.open(window()); }
     public static UiWindow window() {
         var effect = ConfigField.Effect.NEW_CAMPAIGN;
@@ -45,7 +44,7 @@ public final class StartingOptions {
                 .description(new ConfigField.Text("-1: vanilla. Otherwise 0–1000000 AFTER starting assets. New campaigns only; all peers must use matching settings.", "-1：原版。自定义为 0–1000000，在初始资产配置后设置。仅新战役生效；联机各方需使用相同设置。")),
             ConfigField.integer("research", new ConfigField.Text("Player starting research points", "玩家开局研发点"), 0, StartValues.MAX_RESEARCH, effect)
                 .description(new ConfigField.Text("0: no points granted (vanilla). Otherwise 0–10000000 banked as unassigned research and poured into the first tech you pick. Scale reference: one tier-0 technology costs about 2,240,000 points. New campaigns only; all peers must use matching settings.", "0：不发放，等同原版。自定义为 0–10,000,000，作为未分配研发点存入，在你选定第一个科技时全部注入。量级参考：一项 0 级科技约需 2,240,000 点。仅新战役生效；联机各方需使用相同设置。")));
-        try { return SettingsUi.window(title(), new ConfigEditor(config, fields), applied -> rules.update(applied.snapshot().data())); }
+        try { return SettingsUi.window(title(), new ConfigEditor(config, fields), applied -> ArcRules.publish()); }
         catch (IOException ex) { throw new IllegalStateException("Cannot open ARC settings / 无法打开 ARC 设置", ex); }
     }
     /** CREATED 仅在新地图第一次 setupPlayer 后触发；不监听 LOADED/RESTORED。 */

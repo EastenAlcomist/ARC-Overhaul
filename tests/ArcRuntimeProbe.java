@@ -7,6 +7,7 @@ import net.poosh.arc.conquest.*;
 import net.poosh.arc.mixin.*;
 import net.fabricacs.api.rules.SharedRules;
 import net.fabricacs.api.config.*;
+import net.fabricacs.api.ui.*;
 import org.json.*;
 import java.lang.reflect.*;
 import java.nio.file.*;
@@ -38,8 +39,15 @@ public final class ArcRuntimeProbe {
         .put("height",new JSONArray().put(0).put(0).put(0).put(0));}
     static MapSize base;
     static SharedRules rules;
-    static CampaignWorld newWorld(StartValues values) throws Exception {
-        rules.update(values.json());
+    /** 共享规则是「开局设置 + AI 舰队规则」合成的同一份 JSON，发布先后决定生成期读到什么。 */
+    static void publish(StartValues values, FleetPlan plan) {
+        JSONObject start=values.json();JSONObject merged=new JSONObject();
+        for(java.util.Iterator<String> keys=start.keys();keys.hasNext();){String key=keys.next();merged.put(key,start.get(key));}
+        rules.update(merged.put(FleetPlan.KEY,plan.json()));
+    }
+    static CampaignWorld newWorld(StartValues values) throws Exception { return newWorld(values,FleetPlan.empty()); }
+    static CampaignWorld newWorld(StartValues values,FleetPlan plan) throws Exception {
+        publish(values,plan);
         WorldMap map=new WorldMap(mapData(),null,null);
         CampaignWorld world=new CampaignWorld(map,null,null);world.playerEmpireIndex=-1;
         new WorldGenScreen(world,null);
@@ -193,12 +201,337 @@ public final class ArcRuntimeProbe {
         check(areas.size()==settlements.size() && tracedIds.equals(ids),label+" native territory area for every settlement");
         return snapshot.append("rng=").append(map.r.nextInt()).toString();
     }
+    /** 合成一支 AI 舰队登记进原生 Loadable 注册表；真实游戏里这些对象来自 ConstructionStrategy 数据目录。 */
+    static ConstructionStrategy fleet(String name) throws Exception {
+        ConstructionStrategy strategy=(ConstructionStrategy)unsafe(ConstructionStrategy.class);
+        set(strategy,Loadable.class,"name",name);strategy.displayName=name;
+        // 原生 forCharge 会读 enabled 与 charges；Unsafe 分配出来的对象这两处是空的。
+        strategy.enabled=true;strategy.charges=new HashSet<>();strategy.requiredCharge=null;
+        Loadable.map.computeIfAbsent(ConstructionStrategy.class,k->new HashMap<>()).put(name,strategy);
+        return strategy;
+    }
+    /** 只填 isPlayerEmpire 会读的字段：谁声明了这个势力索引，这个势力就归玩家。 */
+    static StrategicSetupInfo setupInfo(int... claimed) throws Exception {
+        StrategicSetupInfo info=(StrategicSetupInfo)unsafe(StrategicSetupInfo.class);
+        ArrayList<StrategicPlayerInfo> players=new ArrayList<>();
+        for(int index:claimed){StrategicPlayerInfo player=(StrategicPlayerInfo)unsafe(StrategicPlayerInfo.class);player.claimedEmpireIndex=index;players.add(player);}
+        set(info,StrategicSetupInfo.class,"strategicPlayerInfos",players);
+        return info;
+    }
+    /** 一张已经固化好舰队规则的地图；共享规则在 WorldGenScreen 里冻结，与真实生成路径一致。 */
+    static WorldMap fleetMap(FleetPlan plan) throws Exception {
+        publish(new StartValues(-1,-1,-1),plan);
+        WorldMap map=new WorldMap(mapData(),null,null);
+        CampaignWorld world=new CampaignWorld(map,null,null);world.playerEmpireIndex=-1;
+        new WorldGenScreen(world,null);
+        map.r=new GuardedRandom(24680);
+        map.setupInfos=new ArrayList<>(List.of(setupInfo(0)));
+        return map;
+    }
+    static FleetPlan planOf(Object... spec) {
+        Map<String,FleetPlan.Entry> entries=new LinkedHashMap<>();
+        for(int i=0;i<spec.length;i+=2)entries.put((String)spec[i],(FleetPlan.Entry)spec[i+1]);
+        return FleetPlan.of(entries);
+    }
+    /**
+     * AI 舰队设置：规则解析与校验、设置窗口、以及生成期真实选择函数。
+     * 夹具里没有游戏自带的 ConstructionStrategy 数据，舰队目录用登记进 Loadable 的合成条目代替；
+     * 选择逻辑、共享规则读取、原生随机数都是真实的。
+     */
+    static void checkFleetOptions() throws Exception {
+        ConstructionStrategy alpha=fleet("arc-alpha"),beta=fleet("arc-beta"),gamma=fleet("arc-gamma");
+        check(Loadable.hasOfName(ConstructionStrategy.class,"arc-alpha")&&Loadable.all(ConstructionStrategy.class).size()>=3,
+            "AI fleets are enumerated through the native Loadable registry");
+        FleetPlan stored=planOf("arc-alpha",new FleetPlan.Entry(FleetPlan.Mode.FORCE,3),"arc-beta",new FleetPlan.Entry(FleetPlan.Mode.BAN,0));
+        check(FleetPlan.read(new JSONObject().put(FleetPlan.KEY,stored.json())).equals(stored),"AI fleet rules round-trip through JSON");
+        check(FleetPlan.read(new JSONObject()).isVanilla(),"missing fleet key reads as vanilla");
+        check(FleetPlan.of(Map.of("arc-alpha",FleetPlan.Entry.ALLOW)).isVanilla(),"an explicit allow entry is normalised away");
+        check(FleetPlan.of(Map.of()).json().length()==0,"empty rules serialise to an empty object");
+        reject(()->new FleetPlan.Entry(FleetPlan.Mode.FORCE,0),"force enable without a country count rejected");
+        reject(()->new FleetPlan.Entry(FleetPlan.Mode.ALLOW,FleetPlan.MAX_COUNTRIES+1),"country count above the cap rejected");
+        reject(()->FleetPlan.of(Map.of("",new FleetPlan.Entry(FleetPlan.Mode.BAN,0))),"empty fleet name rejected");
+        reject(()->FleetPlan.read(new JSONObject().put(FleetPlan.KEY,new JSONObject().put("arc-alpha",new JSONObject().put("mode","maybe").put("count",1)))),"unknown fleet mode rejected");
+        reject(()->FleetPlan.read(new JSONObject().put(FleetPlan.KEY,new JSONObject().put("arc-alpha","ban"))),"non-object fleet entry rejected");
+        reject(()->FleetPlan.read(new JSONObject().put(FleetPlan.KEY,new JSONObject().put("arc-alpha",new JSONObject().put("mode","ban").put("count","2")))),"string country count rejected");
+        reject(()->FleetPlan.validate(new JSONObject().put("cities",1)),"unknown key in the fleet config rejected");
+        publish(new StartValues(-1,-1,-1),FleetPlan.empty());
+        check(rules.current().values().has("cities")&&rules.current().values().has(FleetPlan.KEY),
+            "one shared rule declaration carries starting values and fleet rules together");
+        Lang.currentLocale=Locale.forLanguageTag("chi");check(FleetOptions.title().contains("AI 舰队"),"fleet settings title follows Chinese");
+        Lang.currentLocale=Locale.ENGLISH;check(FleetOptions.title().contains("AI fleets"),"fleet settings title follows English");
+        check(FleetOptions.window()!=null,"AI fleet settings window builds on the real config handle");
+        List<ConstructionStrategy> pool=List.of(alpha,beta,gamma);
+        // 默认规则完全不介入：连返回的对象身份都和原版一致，也不消耗随机数。
+        WorldMap untouched=fleetMap(FleetPlan.empty());
+        check(FleetOptions.choose(pool,beta,1,untouched)==beta&&untouched.r.nextInt()==new GuardedRandom(24680).nextInt(),
+            "vanilla rules return the native pick and leave the map random stream untouched");
+        // 强制禁用：谁都可能被选中，唯独被禁的那支不会。
+        WorldMap banned=fleetMap(planOf("arc-beta",new FleetPlan.Entry(FleetPlan.Mode.BAN,0)));
+        Set<ConstructionStrategy> seen=new HashSet<>();
+        for(int i=0;i<64;i++)seen.add(FleetOptions.choose(pool,beta,1,banned));
+        check(!seen.contains(beta)&&seen.contains(alpha)&&seen.contains(gamma),"a force-disabled AI fleet never appears");
+        check(FleetOptions.choose(pool,beta,1,fleetMap(planOf("arc-alpha",new FleetPlan.Entry(FleetPlan.Mode.BAN,0),
+            "arc-beta",new FleetPlan.Entry(FleetPlan.Mode.BAN,0),"arc-gamma",new FleetPlan.Entry(FleetPlan.Mode.BAN,0))))==beta,
+            "banning every candidate falls back to the native pick instead of failing");
+        // 强制启用：恰好这么多国家，用完就停，也不会再被随机抽到。
+        WorldMap forcedMap=fleetMap(planOf("arc-alpha",new FleetPlan.Entry(FleetPlan.Mode.FORCE,3)));
+        int forced=0;
+        for(int i=1;i<=3;i++)if(FleetOptions.choose(pool,beta,i,forcedMap)==alpha)forced++;
+        check(forced==3,"a force-enabled AI fleet reaches exactly its country count ("+forced+"/3)");
+        // 名额用完之后的势力继续随机，但被强制占用的舰队不会重新回到随机池里。
+        Set<ConstructionStrategy> rest=new HashSet<>();
+        for(int i=4;i<=64;i++)rest.add(FleetOptions.choose(pool,beta,i,forcedMap));
+        check(!rest.contains(alpha),"a force-enabled AI fleet is not also handed out at random");
+        check(rest.contains(beta)&&rest.contains(gamma),"the remaining AI fleets still cover the random pool ("+rest.size()+" of 2)");
+        // 玩家自己的国家不参与替换，也不占用名额。
+        WorldMap playerFirst=fleetMap(planOf("arc-alpha",new FleetPlan.Entry(FleetPlan.Mode.FORCE,1)));
+        check(FleetOptions.choose(pool,beta,0,playerFirst)==beta,"the player's own country keeps the native fleet");
+        check(FleetOptions.choose(pool,beta,1,playerFirst)==alpha,"the first AI country still takes the forced fleet");
+        // 混合三态：强制优先于随机池，禁用的永远不出现。
+        WorldMap mixed=fleetMap(planOf("arc-alpha",new FleetPlan.Entry(FleetPlan.Mode.FORCE,1),"arc-beta",new FleetPlan.Entry(FleetPlan.Mode.BAN,0)));
+        check(FleetOptions.choose(pool,beta,1,mixed)==alpha,"force enable outranks the random pool");
+        check(FleetOptions.choose(pool,beta,2,mixed)==gamma,"once the forced quota is used up the banned fleet is still skipped");
+        // MOD 卸载后配置里还留着名字：只清掉名额，不能让生成失败。
+        WorldMap removed=fleetMap(planOf("arc-removed",new FleetPlan.Entry(FleetPlan.Mode.FORCE,2),"arc-beta",new FleetPlan.Entry(FleetPlan.Mode.BAN,0)));
+        check(FleetOptions.choose(pool,beta,1,removed)==gamma,"an unloaded force-enabled fleet is skipped instead of failing generation");
+        // 真实配置文件读写。
+        ModConfig fleetConfig=(ModConfig)field(null,FleetOptions.class,"config");
+        fleetConfig.save(fleetConfig.read(),new JSONObject().put(FleetPlan.KEY,stored.json()));fleetConfig.reload();
+        check(FleetPlan.read(fleetConfig.read().data()).equals(stored),"AI fleet settings persist through the real config file");
+        fleetConfig.save(fleetConfig.read(),new JSONObject().put(FleetPlan.KEY,FleetPlan.empty().json()));fleetConfig.reload();
+        check(FleetPlan.read(fleetConfig.read().data()).isVanilla(),"emptying the fleet config restores vanilla");
+    }
+    /** 精确按名字与参数个数调用，避免 invoke() 的子串匹配在重载方法上选错。 */
+    static Object call(Object object,String name,Object...args) throws Exception {
+        for(Method method:object.getClass().getDeclaredMethods()){
+            if(!method.getName().equals(name)||method.getParameterCount()!=args.length)continue;
+            method.setAccessible(true);
+            try{return method.invoke(object,args);}catch(InvocationTargetException ex){throw (Exception)ex.getCause();}
+        }
+        throw new NoSuchMethodException(name);
+    }
+    @SuppressWarnings("unchecked") static List<UiNode> kids(UiNode node) throws Exception {
+        return (List<UiNode>)field(node,UiNode.class,"children");
+    }
+    static String kindOf(UiNode node) throws Exception { return ((Enum<?>)field(node,UiNode.class,"kind")).name(); }
+    static String textOf(UiNode node) throws Exception {
+        Object value=field(node,UiNode.class,"text");
+        return value==null?"":String.valueOf(((java.util.function.Supplier<?>)value).get());
+    }
+    static boolean enabledOf(UiNode node) throws Exception {
+        return ((java.util.function.BooleanSupplier)field(node,UiNode.class,"enabled")).getAsBoolean();
+    }
+    /**
+     * 设置窗口的形状：直接遍历真实 UiWindow/UiNode 树，核对每行确实是「名字 + 三态选择 + 出场国家数」，
+     * 而不是只看窗口能不能构造出来。组件字段是包内可见的，这里用反射读取。
+     */
+    static void checkFleetWindowShape() throws Exception {
+        Lang.currentLocale=Locale.ENGLISH;
+        List<ConstructionStrategy> fleets=FleetOptions.loadedFleets();
+        check(!fleets.isEmpty(),"the fleet catalogue is non-empty for the window check");
+        UiWindow window=FleetOptions.window();
+        check(window.title().equals(FleetOptions.title())&&window.modal()&&window.footer()!=null,
+            "fleet window is a modal window with the bilingual title and an action footer");
+        List<UiNode> body=kids(window.content());
+        check(body.size()==3&&kindOf(body.get(0)).equals("LABEL")&&kindOf(body.get(2)).equals("LABEL"),
+            "window body is explanation + list + status");
+        check(kindOf(body.get(1)).equals("SCROLL"),"the catalogue sits in a scroll area so long fleet lists stay reachable");
+        List<UiNode> rows=kids(kids(body.get(1)).get(0));
+        check(rows.size()==fleets.size(),"one row per loaded AI fleet ("+rows.size()+"/"+fleets.size()+")");
+        ConstructionStrategy first=fleets.get(0);
+        List<UiNode> row=kids(rows.get(0));
+        check(row.size()==3&&kindOf(row.get(0)).equals("LABEL")&&kindOf(row.get(1)).equals("BUTTON")&&kindOf(row.get(2)).equals("COLUMN"),
+            "each row is a label, a three-state chooser and a country-count field");
+        check(textOf(row.get(0)).equals(FleetOptions.displayName(first)),"row label is the fleet display name ("+textOf(row.get(0))+")");
+        check(FleetOptions.sourceTag(first).startsWith(first.name),"the row tooltip names the fleet internally and where it came from ("+FleetOptions.sourceTag(first)+")");
+        check(textOf(row.get(1)).equals(FleetOptions.text("Allow (random)","允许（随机出现）")),"the chooser shows the current state ("+textOf(row.get(1))+")");
+        List<UiNode> countField=kids(row.get(2));
+        check(countField.size()==3&&kindOf(countField.get(0)).equals("SPACE")&&kindOf(countField.get(1)).equals("TEXT"),
+            "the country count cell is a spacer, an editable field and its hint line");
+        check(((Integer)field(countField.get(0),UiNode.class,"size"))>0,
+            "the country count field is nudged down by a spacer of "+field(countField.get(0),UiNode.class,"size")+" px");
+        check(textOf(countField.get(1)).equals("1"),"the country count starts at a valid 1, never 0");
+        check(!enabledOf(row.get(2)),"the country count stays disabled while the fleet is only allowed");
+        check(((java.util.function.Supplier<?>)field(countField.get(2),UiNode.class,"text")).get().equals(""),
+            "an untouched country count shows no error line");
+        List<UiNode> footer=kids(window.footer());
+        check(footer.size()==4,"the footer is status plus three action rows");
+        List<UiNode> bulk=kids(footer.get(2));
+        check(bulk.size()==2&&textOf(bulk.get(0)).equals(FleetOptions.text("Force disable all","全部强制禁用"))
+            &&textOf(bulk.get(1)).equals(FleetOptions.text("Force enable all","全部强制启用")),
+            "the footer carries force-disable-all and force-enable-all buttons");
+    }
+    /**
+     * 草稿会话：驱动窗口背后的真实 Editor，覆盖校验、提交写盘、未加载条目的保留与丢弃。
+     */
+    static void checkFleetEditor() throws Exception {
+        fleet("arc-alpha");
+        ModConfig fleetConfig=(ModConfig)field(null,FleetOptions.class,"config");
+        Class<?> editorType=Class.forName("net.poosh.arc.conquest.FleetOptions$Editor");
+        Constructor<?> constructor=editorType.getDeclaredConstructor();constructor.setAccessible(true);
+        // 先放一条来自已卸载 MOD 的规则，确认窗口不会把它丢掉。
+        FleetPlan ghost=FleetPlan.of(Map.of("arc-ghost",new FleetPlan.Entry(FleetPlan.Mode.BAN,0)));
+        fleetConfig.save(fleetConfig.read(),new JSONObject().put(FleetPlan.KEY,ghost.json()));fleetConfig.reload();
+        Object editor=constructor.newInstance();
+        check(!(Boolean)call(editor,"isDirty")&&(Boolean)call(editor,"isValid"),"a freshly opened draft is clean and valid");
+        check(((FleetPlan)call(editor,"draft")).entry("arc-ghost").equals(new FleetPlan.Entry(FleetPlan.Mode.BAN,0)),
+            "a rule for a fleet that is no longer loaded is carried through the draft");
+        call(editor,"setMode","arc-alpha",FleetPlan.Mode.FORCE);
+        check((Boolean)call(editor,"isDirty"),"changing a fleet state marks the draft dirty");
+        check(((Integer)call(editor,"count","arc-alpha"))==1,"force enable starts from a valid count of 1");
+        call(editor,"setCount","arc-alpha","0");
+        check(!(Boolean)call(editor,"isValid")&&call(editor,"save")!=null,"a force-enabled fleet with count 0 refuses to save");
+        call(editor,"setCount","arc-alpha","33");
+        check(!(Boolean)call(editor,"isValid"),"a country count above the cap refuses to save");
+        call(editor,"setCount","arc-alpha","abc");
+        check(!(Boolean)call(editor,"isValid"),"a non-numeric country count refuses to save");
+        call(editor,"setCount","arc-alpha","3");
+        check((Boolean)call(editor,"isValid"),"a valid country count unblocks saving");
+        check(call(editor,"save")==null,"saving a valid draft reports success");
+        FleetPlan written=FleetPlan.read(fleetConfig.read().data());
+        check(written.entry("arc-alpha").equals(new FleetPlan.Entry(FleetPlan.Mode.FORCE,3))
+            &&written.entry("arc-ghost").equals(new FleetPlan.Entry(FleetPlan.Mode.BAN,0)),
+            "the saved file holds the new rule and keeps the unloaded one");
+        check(((FleetPlan)call(editor,"draft")).equals(written),"the draft matches what was written");
+        check(!(Boolean)call(editor,"isDirty"),"a saved draft is no longer dirty");
+        call(editor,"setMode","arc-alpha",FleetPlan.Mode.BAN);
+        call(editor,"reload");
+        check(((FleetPlan)call(editor,"draft")).entry("arc-alpha").equals(new FleetPlan.Entry(FleetPlan.Mode.FORCE,3)),
+            "reload discards the draft and re-reads the file");
+        call(editor,"restoreDefaults");
+        check(((FleetPlan)call(editor,"draft")).isVanilla(),"restoring defaults clears every fleet rule, including unloaded ones");
+        check(call(editor,"save")==null&&FleetPlan.read(fleetConfig.read().data()).isVanilla(),"the saved file is vanilla again");
+        // 数字框的人机工效：先删干净再输入。
+        Object taps=constructor.newInstance();
+        call(taps,"setMode","arc-alpha",FleetPlan.Mode.FORCE);
+        call(taps,"setCount","arc-alpha","");
+        check(((String)call(taps,"countText","arc-alpha")).isEmpty(),"clearing the country count leaves the box empty instead of snapping back");
+        check(((String)call(taps,"countError","arc-alpha")).isEmpty(),"an empty country count shows no error while you retype");
+        check((Boolean)call(taps,"isValid"),"an empty country count does not block saving");
+        check(((Integer)call(taps,"count","arc-alpha"))==1,"an empty country count still means the previous number");
+        call(taps,"setCount","arc-alpha","3");
+        check(((String)call(taps,"countText","arc-alpha")).equals("3"),"a new number can be typed straight after clearing");
+        call(taps,"setCount","arc-alpha","33");
+        check(!((String)call(taps,"countError","arc-alpha")).isEmpty()&&!(Boolean)call(taps,"isValid"),
+            "a country count above the cap is reported and blocks saving");
+        call(taps,"setCount","arc-alpha","abc");
+        check(!((String)call(taps,"countError","arc-alpha")).isEmpty(),"a non-numeric country count is reported");
+        call(taps,"setCount","arc-alpha","2");
+        call(taps,"setCount","arc-alpha","");
+        call(taps,"setCount","arc-beta","5");
+        check(((String)call(taps,"countText","arc-alpha")).equals("2"),
+            "typing in another box restores the number deleted from the first one");
+        call(taps,"setCount","arc-alpha","");
+        call(taps,"setAll",FleetPlan.Mode.BAN);
+        check(((String)call(taps,"countText","arc-alpha")).equals("2"),"pressing a button also restores the deleted number");
+        call(taps,"setMode","arc-alpha",FleetPlan.Mode.FORCE);
+        call(taps,"setCount","arc-alpha","");
+        check(call(taps,"save")==null,"an empty box can still be saved");
+        check(FleetPlan.read(fleetConfig.read().data()).entry("arc-alpha").equals(new FleetPlan.Entry(FleetPlan.Mode.FORCE,2)),
+            "an empty box saves the previous number, never 0");
+        // 批量按钮。
+        Object bulkEditor=constructor.newInstance();
+        call(bulkEditor,"setAll",FleetPlan.Mode.BAN);
+        FleetPlan banned=(FleetPlan)call(bulkEditor,"draft");
+        check(banned.entries().size()==FleetOptions.loadedFleets().size()
+            &&banned.entries().values().stream().allMatch(e->e.mode()==FleetPlan.Mode.BAN),
+            "force disable all marks every loaded AI fleet ("+banned.entries().size()+" of "+FleetOptions.loadedFleets().size()+")");
+        call(bulkEditor,"setAll",FleetPlan.Mode.FORCE);
+        FleetPlan allForced=(FleetPlan)call(bulkEditor,"draft");
+        check(allForced.entries().size()==FleetOptions.loadedFleets().size()
+            &&allForced.entries().values().stream().allMatch(e->e.mode()==FleetPlan.Mode.FORCE&&e.count()>=1),
+            "force enable all marks every loaded AI fleet with a usable country count");
+        check(((FleetPlan)call(bulkEditor,"draft")).entries().size()!=0,"bulk rules survive into the draft");
+    }
+    /**
+     * 重定向落点检查：解析原生 {@code WorldMap$2.run} 的字节码，确认 {@code ordinal = 1} 指的就是
+     * 「取一支舰队交给 Empire 构造器」那个 {@code ArrayList.get}。
+     *
+     * <p>原生方法里有四个 {@code ArrayList.get}：城市名、舰队、科技选项、英雄。只有舰队那个的结果会被
+     * {@code CHECKCAST ConstructionStrategy}，所以「invokevirtual ArrayList.get 紧跟 checkcast 到
+     * ConstructionStrategy」这条指令序列能唯一定位它；断言它的序号恰好是 1，就等于断言注入配置正确。
+     * 类加载器给出的是归档里的原始字节（资源不会经过 Mixin 改写），这正是要对着游戏发行版本核对的份。</p>
+     */
+    static void checkFleetHookTarget() throws Exception {
+        byte[] code;
+        Class<?> type=Class.forName("com.zarkonnen.airships.WorldMap$2");
+        try(java.io.InputStream in=type.getResourceAsStream("/com/zarkonnen/airships/WorldMap$2.class")) {
+            check(in!=null,"WorldMap$2 class file is readable from the game archive");code=in.readAllBytes();
+        }
+        // 常量池一遍：Utf8 文本、Class 的名字索引、NameAndType 的名字索引、成员引用的 (类,名字) 索引。
+        Map<Integer,String> utf=new HashMap<>();
+        Map<Integer,Integer> classNames=new HashMap<>();
+        Map<Integer,Integer> nameAndTypes=new HashMap<>();
+        Map<Integer,int[]> refs=new HashMap<>();
+        int p=8,count=readU2(code,p);p+=2;
+        for(int index=1;index<count;index++){
+            int tag=code[p++]&0xff;
+            switch(tag){
+                case 1->{int length=readU2(code,p);p+=2;utf.put(index,new String(code,p,length,java.nio.charset.StandardCharsets.UTF_8));p+=length;}
+                case 7->{classNames.put(index,readU2(code,p));p+=2;}
+                case 8->p+=2;
+                case 9,10,11->{refs.put(index,new int[]{readU2(code,p),readU2(code,p+2)});p+=4;}
+                case 12->{nameAndTypes.put(index,readU2(code,p));p+=4;}
+                case 3,4->p+=4;
+                case 5,6->{p+=8;index++;}
+                case 15->p+=3;
+                case 16,19,20->p+=2;
+                case 17,18->p+=4;
+                default->throw new IllegalStateException("Unknown constant pool tag "+tag);
+            }
+        }
+        int strategyClass=-1,listGet=-1;
+        for(Map.Entry<Integer,Integer> entry:classNames.entrySet())
+            if("com/zarkonnen/airships/ConstructionStrategy".equals(utf.get(entry.getValue())))strategyClass=entry.getKey();
+        for(Map.Entry<Integer,int[]> entry:refs.entrySet()){
+            String owner=utf.get(classNames.getOrDefault(entry.getValue()[0],-1));
+            String member=utf.get(nameAndTypes.getOrDefault(entry.getValue()[1],-1));
+            // ArrayList 上带这个名字的成员只有 get(int)，常量池里也就是那一个引用。
+            if("java/util/ArrayList".equals(owner)&&"get".equals(member))listGet=entry.getKey();
+        }
+        check(strategyClass>0&&listGet>0,"WorldMap$2.bytecode references ArrayList.get and ConstructionStrategy");
+        byte[] run=codeAttribute(code,utf,p,"run","(ILcom/zarkonnen/airships/WorldMap;)Z");
+        check(run!=null,"native WorldMap$2.run bytecode is parsed from the class file");
+        List<Integer> sites=new ArrayList<>();
+        for(int i=0;i+2<run.length;i++)if((run[i]&0xff)==0xb6&&readU2(run,i+1)==listGet)sites.add(i);
+        check(sites.size()==4,"native run() has four ArrayList.get call sites ("+sites.size()+")");
+        int fleetOrdinal=-1;
+        for(int index=0;index<sites.size();index++){
+            int at=sites.get(index);
+            if(at+6<run.length&&(run[at+3]&0xff)==0xc0&&readU2(run,at+4)==strategyClass)fleetOrdinal=index;
+        }
+        check(fleetOrdinal==1,"the strategy pick is ArrayList.get call site #1, matching the injected ordinal ("+fleetOrdinal+")");
+    }
+    /** 取出某个方法的 Code 属性字节；属性长度是 u4，其余按 JVM 规范逐段跳过。 */
+    static byte[] codeAttribute(byte[] code,Map<Integer,String> utf,int from,String name,String descriptor){
+        int p=from+6;                                  // access_flags, this_class, super_class
+        int interfaces=readU2(code,p);p+=2+2*interfaces;
+        int fields=readU2(code,p);p+=2;
+        for(int i=0;i<fields;i++){int attrs=readU2(code,p+6);p+=8;for(int a=0;a<attrs;a++)p+=6+(int)readU4(code,p+2);}
+        int methods=readU2(code,p);p+=2;
+        for(int i=0;i<methods;i++){
+            String methodName=utf.get(readU2(code,p+2)),methodDescriptor=utf.get(readU2(code,p+4));
+            int attrs=readU2(code,p+6);int q=p+8;
+            for(int a=0;a<attrs;a++){
+                String attribute=utf.get(readU2(code,q));long length=readU4(code,q+2);
+                if(name.equals(methodName)&&descriptor.equals(methodDescriptor)&&"Code".equals(attribute)){
+                    int size=(int)readU4(code,q+10);        // max_stack, max_locals, code_length
+                    return Arrays.copyOfRange(code,q+14,q+14+size);
+                }
+                q+=6+(int)length;
+            }
+            p=q;
+        }
+        return null;
+    }
+    static int readU2(byte[] code,int at){return ((code[at]&0xff)<<8)|(code[at+1]&0xff);}
+    static long readU4(byte[] code,int at){return ((long)(code[at]&0xff)<<24)|((code[at+1]&0xff)<<16)|((code[at+2]&0xff)<<8)|(code[at+3]&0xff);}
     public static void main(String[] args) throws Exception {
-        for(String name:List.of("WorldMap","WorldMap$3","WorldMap$4","GameSetupScreen","CampaignWorld","WorldGenScreen")) {
+        for(String name:List.of("WorldMap","WorldMap$2","WorldMap$3","WorldMap$4","GameSetupScreen","CampaignWorld","WorldGenScreen")) {
             Class<?> type=Class.forName("com.zarkonnen.airships."+name);
             check(Arrays.stream(type.getDeclaredMethods()).anyMatch(m->m.getName().contains("arc$")||m.getName().contains("acbric$")),"real mixin transformation: "+name);
         }
-        rules=(SharedRules)field(null,StartingOptions.class,"rules");check(rules!=null,"real ARC initializer declared rules");
+        rules=(SharedRules)field(null,ArcRules.class,"rules");check(rules!=null,"real ARC initializer declared rules");
         Lang.currentLocale=Locale.forLanguageTag("chi");check(StartingOptions.title().contains("玩家"),"Chinese follows game");
         Lang.currentLocale=Locale.ENGLISH;check(StartingOptions.title().contains("Player"),"English follows game");
         check(StartingOptions.window()!=null,"settings window builds using real config editor");
@@ -307,6 +640,10 @@ public final class ArcRuntimeProbe {
         check(generatedLand==14&&generatedCityLand==4,"actual native placement reaches land hook with correct city types");
         checkTerritoryIds();
         checkLandPlacement();
+        checkFleetOptions();
+        checkFleetWindowShape();
+        checkFleetEditor();
+        checkFleetHookTarget();
         System.out.println("ARC RUNTIME PASS: "+checks+" checks");
     }
 }
