@@ -1,11 +1,11 @@
 # ARC Overhaul starting-options test guide
 
-[中文](TESTING.zh-CN.md) · 0.1.0-dev.5 · 2026-09-27
+[中文](TESTING.zh-CN.md) · 0.1.0-dev.7 · 2026-09-27
 
 ## Install and open
 
 1. Exit the game. Use API dev.21 or later compatible. Disable Starting Cities and restart, or keep its JAR outside `mods/`. Install only one ARC version.
-2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.5.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
+2. Copy `build/libs/ARC-Overhaul-0.1.0-dev.7.jar` to the running copy's `game/mods/`. No installed copy was overwritten.
 3. Start a new single-player conquest setup. Scroll its settings list to the bottom and select **ARC Overhaul: Player starting options**, or use **MOD list → ARC Overhaul → Details**.
 4. Edit, Apply, close, then use the native Start button. `-1` preserves that field's vanilla value; fields are independent.
 5. Do the same with the second entry, **ARC Overhaul: AI fleets**; it lists every loaded AI fleet and is described in [AI fleets](README.md#ai-fleets).

@@ -1,11 +1,11 @@
 # ARC Overhaul 开局设置测试手册
 
-[English](TESTING.md) · 0.1.0-dev.5 · 2026-09-27
+[English](TESTING.md) · 0.1.0-dev.7 · 2026-09-27
 
 ## 安装与入口
 
 1. 退出游戏，确认 API 至少为 dev.21。停用旧 Starting Cities 并重启，也可将其 JAR 移到 `mods/` 外保留。不要同时装两个 ARC 版本。
-2. 将 `build/libs/ARC-Overhaul-0.1.0-dev.5.jar` 复制到实际运行副本 `game/mods/`。本工程没有自动覆盖运行包。
+2. 将 `build/libs/ARC-Overhaul-0.1.0-dev.7.jar` 复制到实际运行副本 `game/mods/`。本工程没有自动覆盖运行包。
 3. 开始新的单人征服战役，将原生设置列表滚至最底部，点击 **ARC 大修：玩家开局设置**。另一个入口是 **MOD 列表 → ARC Overhaul → 详情**。
 4. 输入、应用、关闭窗口，再点击游戏原来的开始按钮。`-1` 表示该项使用原版，三个字段相互独立。
 5. 同样方式打开第二个入口 **ARC 大修：AI 舰队**；它列出所有已加载的 AI 舰队，语义见 [AI 舰队](README.zh-CN.md#ai-舰队)。

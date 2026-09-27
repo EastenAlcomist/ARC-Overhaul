@@ -5,6 +5,7 @@ import com.zarkonnen.airships.*;
 import com.zarkonnen.catengine.util.Utils;
 import net.poosh.arc.conquest.*;
 import net.poosh.arc.mixin.*;
+import net.poosh.arc.speed.*;
 import net.fabricacs.api.rules.SharedRules;
 import net.fabricacs.api.config.*;
 import net.fabricacs.api.ui.*;
@@ -640,10 +641,68 @@ public final class ArcRuntimeProbe {
         check(generatedLand==14&&generatedCityLand==4,"actual native placement reaches land hook with correct city types");
         checkTerritoryIds();
         checkLandPlacement();
+        checkEffectiveSpeed();
         checkFleetOptions();
         checkFleetWindowShape();
         checkFleetEditor();
         checkFleetHookTarget();
         System.out.println("ARC RUNTIME PASS: "+checks+" checks");
+    }
+    /**
+     * 有效速度：面板速度必须计入弹簧的接地摩擦 λ。
+     * 原版 {@code getSpeed()} 只减二次空气阻力，陆行舰面板速度因此比实际战斗稳态速度高 2–6 倍
+     * （无头实测数据见 tools/arc/analysis/landship-speed-analysis.md）。
+     */
+    static void checkEffectiveSpeed() throws Exception {
+        Class<?> panelClass=Class.forName("com.zarkonnen.airships.ShipEditorUtils");
+        Method handler=null;
+        StringBuilder injected=new StringBuilder();
+        for(Method m:panelClass.getDeclaredMethods()) {
+            if(m.getName().contains("$")) injected.append(m.getName()).append(' ');
+            if(m.getName().contains("arc$groundedSpeed")) handler=m;
+        }
+        System.out.println("ARC speed mixin methods on ShipEditorUtils: "+injected);
+        check(handler!=null,"real mixin transformation: ShipEditorUtils carries the ARC effective-speed handler");
+        double mass=898, air=0.0025716827585966387, force=1.1, vanillaSpeed=0.6901595115018447;
+        check(EffectiveSpeed.steadySpeed(force,898,air,0)==StrictMath.sqrt(force/mass/air),
+            "zero ground friction reproduces the native terminal speed exactly");
+        check(Math.abs(EffectiveSpeed.steadySpeed(force,898,air,0)-vanillaSpeed)<1e-12,
+            "panel formula still matches the measured walker getSpeed ("+vanillaSpeed+")");
+        double one=EffectiveSpeed.perTickFactor(new double[]{0.004},EffectiveSpeed.TICK_MS);
+        double four=EffectiveSpeed.perTickFactor(new double[]{0.004,0.004,0.004,0.004},EffectiveSpeed.TICK_MS);
+        check(Math.abs(one-StrictMath.pow(0.996,16))<1e-12,"one grounded spring decays speed by the native (1-xFriction)^ms");
+        check(Math.abs(four-one*StrictMath.pow(0.9996,16)*StrictMath.pow(0.9996,16)*StrictMath.pow(0.9996,16))<1e-12,
+            "further grounded springs only contribute 10% of xFriction");
+        double lambda=EffectiveSpeed.groundFrictionRate(new double[]{0.004,0.004,0.004,0.004},EffectiveSpeed.TICK_MS);
+        check(lambda>0.004&&lambda<0.006,"four leg springs land near the native xFriction ("+lambda+")");
+        check(EffectiveSpeed.groundFrictionRate(new double[0],EffectiveSpeed.TICK_MS)==0,"no springs means no ground friction");
+        double grounded=EffectiveSpeed.steadySpeed(force,898,air,lambda);
+        check(Math.abs(grounded-0.2347)<0.03,"grounded speed lands on the measured combat value ("+grounded+" vs 0.2347)");
+        check(grounded<0.5*vanillaSpeed,"ground friction more than halves the reported landship speed");
+        ModuleType legType=moduleType(1.1,List.of(legSpec(0.004),legSpec(0.004)),List.of());
+        ModuleType trackType=moduleType(0.0,List.of(),List.of(new Spring(0,110,85,0.06,0.002,0.003)));
+        Airship walker=(Airship)unsafe(Airship.class);walker.type=ShipType.LANDSHIP;
+        walker.modules=new ArrayList<com.zarkonnen.airships.Module>(List.of(module(legType),module(trackType)));
+        check(EffectiveSpeed.springFrictions(walker).length==3,"leg and module springs are both collected from a landship");
+        double vanilla=walker.getMainMapSpeed(BonusSet.empty()),reported=EffectiveSpeed.mainMapSpeed(walker,BonusSet.empty());
+        check(vanilla>0&&reported>0&&reported<vanilla,"reported panel speed is strictly lower once ground friction is counted");
+        Airship flyer=(Airship)unsafe(Airship.class);flyer.type=ShipType.AIRSHIP;flyer.modules=walker.modules;
+        check(EffectiveSpeed.mainMapSpeed(flyer,BonusSet.empty())==flyer.getMainMapSpeed(BonusSet.empty()),
+            "airships keep the native panel speed because their springs never rest on the ground");
+    }
+    static ModuleType moduleType(double propulsion,List<Leg.Spec> legs,List<Spring> springs) throws Exception {
+        ModuleType type=(ModuleType)unsafe(ModuleType.class);
+        set(type,ModuleType.class,"propulsion",BonusableValue.of(Double.valueOf(propulsion)));
+        set(type,ModuleType.class,"canResupplyInCombat",BonusableValue.of(Boolean.TRUE));
+        set(type,ModuleType.class,"maxXSpeed",BonusableValue.of(Double.valueOf(10000.0)));
+        set(type,ModuleType.class,"legSpecs",new ArrayList<Leg.Spec>(legs));
+        set(type,ModuleType.class,"springs",new ArrayList<Spring>(springs));
+        return type;
+    }
+    static com.zarkonnen.airships.Module module(ModuleType type) throws Exception {
+        com.zarkonnen.airships.Module m=(com.zarkonnen.airships.Module)unsafe(com.zarkonnen.airships.Module.class);m.type=type;return m;
+    }
+    static Leg.Spec legSpec(double friction) {
+        return new Leg.Spec(false,1.5,-0.5,70,70,70,18,0,80,1000,false,new Spring(0,110,85,0.06,friction,0.005),null,null,null,null,null,null,0,0);
     }
 }
